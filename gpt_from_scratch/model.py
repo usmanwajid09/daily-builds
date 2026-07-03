@@ -1,7 +1,10 @@
 """Tiny GPT: token + positional embeddings, stacked transformer blocks,
 final layer norm, and a linear head projecting back to vocab logits.
 
-Forward pass only in this milestone - no training yet (see REVIEW.md).
+Milestone 2 adds `backward()`: given dL/dlogits, it walks the whole
+network in reverse (head -> final layernorm -> blocks in reverse order ->
+embeddings) and accumulates gradients into every parameter, ready for an
+optimizer step. See train.py for the training loop that uses this.
 """
 from __future__ import annotations
 
@@ -35,6 +38,8 @@ class TinyGPT:
 
         self.token_emb = rng.normal(0, 0.02, size=(vocab_size, d_model))
         self.pos_emb = rng.normal(0, 0.02, size=(max_seq_len, d_model))
+        self.d_token_emb = np.zeros_like(self.token_emb)
+        self.d_pos_emb = np.zeros_like(self.pos_emb)
 
         self.blocks = [
             TransformerBlock(d_model, n_heads, rng) for _ in range(n_layers)
@@ -42,7 +47,9 @@ class TinyGPT:
         self.ln_final = LayerNorm(d_model)
         self.head = Linear(d_model, vocab_size, rng)
 
-    def __call__(self, token_ids: np.ndarray) -> np.ndarray:
+        self._token_ids = None
+
+    def forward(self, token_ids: np.ndarray) -> np.ndarray:
         """token_ids: (batch, seq_len) int array -> logits (batch, seq_len, vocab_size)."""
         token_ids = np.asarray(token_ids)
         if token_ids.ndim != 2:
@@ -57,11 +64,43 @@ class TinyGPT:
         if token_ids.min() < 0 or token_ids.max() >= self.vocab_size:
             raise ValueError("token_ids contains an id outside [0, vocab_size)")
 
+        self._token_ids = token_ids
         x = self.token_emb[token_ids] + self.pos_emb[:seq_len]
 
         for block in self.blocks:
-            x = block(x)
+            x = block.forward(x)
 
-        x = self.ln_final(x)
-        logits = self.head(x)
+        x = self.ln_final.forward(x)
+        logits = self.head.forward(x)
         return logits
+
+    def backward(self, dlogits: np.ndarray) -> None:
+        """dlogits: dL/dlogits, shape (batch, seq_len, vocab_size). Populates
+        gradients on every parameter in the model (see parameters_and_grads);
+        there's no further "input" to return a gradient for."""
+        if self._token_ids is None:
+            raise RuntimeError("backward() called before forward()")
+
+        dx = self.head.backward(dlogits)
+        dx = self.ln_final.backward(dx)
+        for block in reversed(self.blocks):
+            dx = block.backward(dx)
+
+        token_ids = self._token_ids
+        seq_len = token_ids.shape[1]
+
+        self.d_token_emb = np.zeros_like(self.token_emb)
+        np.add.at(self.d_token_emb, token_ids, dx)
+
+        self.d_pos_emb = np.zeros_like(self.pos_emb)
+        self.d_pos_emb[:seq_len] = dx.sum(axis=0)
+
+    def parameters_and_grads(self):
+        params = [(self.token_emb, self.d_token_emb), (self.pos_emb, self.d_pos_emb)]
+        for block in self.blocks:
+            params += block.parameters_and_grads()
+        params += self.ln_final.parameters_and_grads()
+        params += self.head.parameters_and_grads()
+        return params
+
+    __call__ = forward
