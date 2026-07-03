@@ -37,3 +37,11 @@ def test_deterministic_with_same_seed():
     m2 = TinyGPT(vocab_size=10, d_model=16, n_heads=2, n_layers=1, seed=42)
     tokens = np.array([[1, 2, 3]])
     assert np.allclose(m1(tokens), m2(tokens))
+
+
+def test_rejects_empty_token_ids():
+    model = TinyGPT(vocab_size=5, d_model=8, n_heads=2, n_layers=1)
+    with pytest.raises(ValueError):
+        model(np.zeros((1, 0), dtype=int))
+    with pytest.raises(ValueError):
+        model(np.zeros((0, 3), dtype=int))

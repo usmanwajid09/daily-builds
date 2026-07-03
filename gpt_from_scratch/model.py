@@ -52,6 +52,8 @@ class TinyGPT:
             raise ValueError(
                 f"sequence length {seq_len} exceeds max_seq_len {self.max_seq_len}"
             )
+        if batch == 0 or seq_len == 0:
+            raise ValueError("token_ids must not be empty (batch and seq_len must both be > 0)")
         if token_ids.min() < 0 or token_ids.max() >= self.vocab_size:
             raise ValueError("token_ids contains an id outside [0, vocab_size)")
 
