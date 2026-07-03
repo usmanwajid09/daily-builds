@@ -1,3 +1,9 @@
+# daily-builds
+
+Daily small ML/CV/web-dev projects, built and reviewed automatically each day. Each project lives in its own folder at the repo root (see below for today's).
+
+---
+
 # Linear Regression via Gradient Descent (from scratch)
 
 A tiny, dependency-light implementation of simple linear regression trained
