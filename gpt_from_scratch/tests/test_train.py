@@ -22,6 +22,32 @@ def test_get_batch_rejects_corpus_shorter_than_seq_len():
         get_batch(data, seq_len=10, batch_size=2, rng=rng)
 
 
+def test_get_batch_works_at_minimum_valid_corpus_length():
+    """Regression test: corpus length == seq_len + 1 is the smallest legal
+    input (exactly one valid start position, s=0). This used to crash with
+    a numpy "high <= 0" ValueError due to an off-by-one in the sampling
+    bound - see REVIEW.md."""
+    rng = np.random.default_rng(0)
+    data = np.arange(4)  # seq_len=3 -> only s=0 is valid
+    x, y = get_batch(data, seq_len=3, batch_size=5, rng=rng)
+    assert x.shape == (5, 3)
+    assert np.array_equal(x, np.tile([0, 1, 2], (5, 1)))
+    assert np.array_equal(y, np.tile([1, 2, 3], (5, 1)))
+
+
+def test_get_batch_samples_the_last_valid_start_position():
+    """The off-by-one also meant the very last valid start position was
+    never sampled. With enough draws it must show up now."""
+    rng = np.random.default_rng(0)
+    n, seq_len = 10, 3
+    max_valid_start = n - seq_len - 1  # = 6
+    starts_seen = set()
+    for _ in range(3000):
+        x, _ = get_batch(np.arange(n), seq_len=seq_len, batch_size=1, rng=rng)
+        starts_seen.add(int(x[0, 0]))
+    assert max_valid_start in starts_seen
+
+
 def test_training_reduces_loss_on_repetitive_corpus():
     """A short, highly repetitive corpus should be easy to mostly-memorize
     within a couple hundred steps - a good, fast smoke test that the full

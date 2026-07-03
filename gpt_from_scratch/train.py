@@ -39,7 +39,13 @@ def get_batch(data_ids: np.ndarray, seq_len: int, batch_size: int, rng: np.rando
             f"corpus has {n} tokens, too short for seq_len={seq_len} "
             "(need at least seq_len + 1 tokens)"
         )
-    starts = rng.integers(0, n - seq_len - 1, size=batch_size)
+    # valid start positions are s in [0, n - seq_len - 1] inclusive (so that
+    # y = data[s+1 : s+seq_len+1] never runs past the end) - integers()'s
+    # high bound is exclusive, so pass n - seq_len, not n - seq_len - 1
+    # (off-by-one caught in self-review: the old bound both crashed at the
+    # minimum valid corpus length and silently never sampled the last
+    # valid start position otherwise - see REVIEW.md).
+    starts = rng.integers(0, n - seq_len, size=batch_size)
     x = np.stack([data_ids[s:s + seq_len] for s in starts])
     y = np.stack([data_ids[s + 1:s + seq_len + 1] for s in starts])
     return x, y
