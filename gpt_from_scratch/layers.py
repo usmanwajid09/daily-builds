@@ -110,3 +110,81 @@ class LayerNorm:
         return [(self.gamma, self.dgamma), (self.beta, self.dbeta)]
 
     __call__ = forward
+
+
+class Dropout:
+    """Inverted dropout: zeroes each activation independently with
+    probability `p` at train time and rescales survivors by 1/(1-p), so
+    no rescaling is needed at eval time - `forward(x, training=False)`
+    (or p=0) is simply the identity function.
+    """
+
+    def __init__(self, p: float = 0.0):
+        if not 0.0 <= p < 1.0:
+            raise ValueError("dropout probability p must be in [0, 1)")
+        self.p = p
+        self._mask = None
+
+    def forward(self, x, training: bool, rng) -> "np.ndarray":
+        if not training or self.p == 0.0:
+            self._mask = None
+            return x
+        keep_prob = 1.0 - self.p
+        self._mask = (rng.random(x.shape) < keep_prob) / keep_prob
+        return x * self._mask
+
+    def backward(self, dout):
+        if self._mask is None:
+            return dout
+        return dout * self._mask
+
+    __call__ = forward
+
+
+class TiedHead:
+    """Output projection that reuses the token embedding matrix
+    (transposed) as its weight, plus a small untied bias - the
+    weight-tying trick from Press & Wolf, 2017 ("Using the Output
+    Embedding to Improve Language Models"). Halves the single biggest
+    parameter matrix in a small-vocab model (the embedding/head pair) and
+    tends to regularize training, since the same vectors have to do
+    double duty as both "what does token X look like as input" and "how
+    much does the model want to predict token X".
+
+    Unlike Linear, this layer does not own its weight - `token_emb` is a
+    reference to `TinyGPT.token_emb`, so gradients computed here
+    (`d_token_emb_contrib`) must be added to the *separate* gradient the
+    embedding lookup produces; TinyGPT.backward does that summation.
+    """
+
+    def __init__(self, token_emb, vocab_size: int):
+        self.token_emb = token_emb
+        self.bias = np.zeros(vocab_size)
+        self.dbias = np.zeros_like(self.bias)
+        self.d_token_emb_contrib = np.zeros_like(token_emb)
+        self._x = None
+
+    def forward(self, x):
+        self._x = x
+        return x @ self.token_emb.T + self.bias
+
+    def backward(self, dout):
+        if self._x is None:
+            raise RuntimeError("backward() called before forward()")
+        x = self._x
+        d_model = self.token_emb.shape[1]
+        vocab_size = self.token_emb.shape[0]
+        x2 = x.reshape(-1, d_model)
+        dout2 = dout.reshape(-1, vocab_size)
+        self.d_token_emb_contrib = dout2.T @ x2
+        self.dbias = dout2.sum(axis=0)
+        dx = (dout2 @ self.token_emb).reshape(x.shape)
+        return dx
+
+    def parameters_and_grads(self):
+        # token_emb's gradient is accumulated and exposed by TinyGPT
+        # itself (it also gets gradient from the embedding lookup path) -
+        # this layer only owns `bias`.
+        return [(self.bias, self.dbias)]
+
+    __call__ = forward

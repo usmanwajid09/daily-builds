@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 
 from gpt_from_scratch.attention import CausalSelfAttention
-from gpt_from_scratch.layers import LayerNorm, Linear, gelu, gelu_backward
+from gpt_from_scratch.layers import Dropout, LayerNorm, Linear, gelu, gelu_backward
 
 
 class FeedForward:
@@ -43,29 +43,51 @@ class FeedForward:
 
 
 class TransformerBlock:
-    def __init__(self, d_model: int, n_heads: int, rng: np.random.Generator):
+    def __init__(self, d_model: int, n_heads: int, rng: np.random.Generator, dropout_p: float = 0.0):
         self.ln1 = LayerNorm(d_model)
         self.attn = CausalSelfAttention(d_model, n_heads, rng)
         self.ln2 = LayerNorm(d_model)
         self.ffn = FeedForward(d_model, rng)
+        self.dropout_p = dropout_p
+        self.attn_dropout = Dropout(dropout_p)
+        self.ffn_dropout = Dropout(dropout_p)
 
-    def forward(self, x: np.ndarray) -> np.ndarray:
+    def forward(self, x: np.ndarray, training: bool = True, rng: np.random.Generator = None) -> np.ndarray:
+        """`training`/`rng` only matter when dropout_p > 0 (the default,
+        dropout_p=0.0, makes both Dropout calls a no-op identity - so
+        every pre-existing call site that only ever passes `x` keeps
+        working exactly as before)."""
         a = self.attn.forward(self.ln1.forward(x))
+        a = self.attn_dropout.forward(a, training=training, rng=rng)
         x2 = x + a
         f = self.ffn.forward(self.ln2.forward(x2))
+        f = self.ffn_dropout.forward(f, training=training, rng=rng)
         x3 = x2 + f
         return x3
 
     def backward(self, dout: np.ndarray) -> np.ndarray:
-        # x3 = x2 + ffn(ln2(x2))
-        dx2_branch = self.ln2.backward(self.ffn.backward(dout))
+        # x3 = x2 + ffn_dropout(ffn(ln2(x2)))
+        df = self.ffn_dropout.backward(dout)
+        dx2_branch = self.ln2.backward(self.ffn.backward(df))
         dx2 = dout + dx2_branch  # skip connection gets the full upstream grad too
 
-        # x2 = x + attn(ln1(x))
-        dx_branch = self.ln1.backward(self.attn.backward(dx2))
+        # x2 = x + attn_dropout(attn(ln1(x)))
+        da = self.attn_dropout.backward(dx2)
+        dx_branch = self.ln1.backward(self.attn.backward(da))
         dx = dx2 + dx_branch
 
         return dx
+
+    def forward_incremental(self, x: np.ndarray, cache):
+        """Single-step (or short-chunk) forward used only during KV-cached
+        generation - no dropout (always eval mode) and no backward
+        support, see CausalSelfAttention.forward_incremental for the
+        cache format."""
+        a, new_cache = self.attn.forward_incremental(self.ln1.forward(x), cache)
+        x2 = x + a
+        f = self.ffn.forward(self.ln2.forward(x2))
+        x3 = x2 + f
+        return x3, new_cache
 
     def parameters_and_grads(self):
         return (

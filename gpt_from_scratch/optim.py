@@ -43,3 +43,48 @@ class Adam:
             m_hat = self._m[i] / bias_correction1
             v_hat = self._v[i] / bias_correction2
             p -= self.lr * m_hat / (np.sqrt(v_hat) + self.eps)
+
+
+def clip_grad_norm(params_and_grads, max_norm: float) -> float:
+    """Rescale all gradients in-place so their combined L2 norm is at most
+    `max_norm` (the standard "global norm" gradient clipping used to stop
+    a few exploding gradients - e.g. from a bad batch - from blowing up
+    the whole update). Returns the pre-clipping norm, mostly useful for
+    logging/debugging.
+    """
+    if max_norm <= 0:
+        raise ValueError("max_norm must be positive")
+    total_sq = 0.0
+    for _, g in params_and_grads:
+        total_sq += float(np.sum(g * g))
+    total_norm = float(np.sqrt(total_sq))
+    if total_norm > max_norm:
+        scale = max_norm / (total_norm + 1e-6)
+        for _, g in params_and_grads:
+            g *= scale
+    return total_norm
+
+
+def cosine_lr_with_warmup(
+    step: int,
+    max_lr: float,
+    warmup_steps: int,
+    max_steps: int,
+    min_lr_ratio: float = 0.1,
+) -> float:
+    """Linear warmup for `warmup_steps`, then cosine decay from `max_lr`
+    down to `max_lr * min_lr_ratio` by `max_steps`, then held flat at the
+    floor. The standard GPT-family schedule: too-high a constant LR tends
+    to destabilize early training before the model has any sense of
+    scale, and decaying at the end lets it settle into a sharper minimum.
+    """
+    if warmup_steps < 0 or max_steps <= 0:
+        raise ValueError("warmup_steps must be >= 0 and max_steps must be > 0")
+    if step < warmup_steps:
+        return max_lr * (step + 1) / max(1, warmup_steps)
+    if step >= max_steps:
+        return max_lr * min_lr_ratio
+    progress = (step - warmup_steps) / max(1, (max_steps - warmup_steps))
+    cosine = 0.5 * (1.0 + np.cos(np.pi * progress))
+    floor = max_lr * min_lr_ratio
+    return floor + (max_lr - floor) * cosine
