@@ -99,6 +99,59 @@ class CausalSelfAttention:
         dx_v = self.value.backward(dv_merged)
         return dx_q + dx_k + dx_v
 
+    def forward_incremental(self, x: np.ndarray, cache):
+        """Inference-only forward step for KV-cached generation: computes
+        Q/K/V only for the NEW tokens in `x` (usually just one), reuses
+        cached K/V for everything already processed, and returns the
+        concatenated (k, v) as the updated cache for next time.
+
+        No backward support - this path only exists for generate.py.
+        Mathematically equivalent to calling `forward()` on the full
+        sequence so far and taking the last `x.shape[1]` outputs (see
+        test_kv_cache.py, which checks exactly that).
+
+        x: (batch, chunk_len, d_model) - the new tokens only.
+        cache: None (nothing processed yet) or (k, v), each
+               (batch, n_heads, past_len, d_head).
+        Returns: (out, (k, v)) where out is (batch, chunk_len, d_model).
+        """
+        if x.ndim != 3 or x.shape[-1] != self.d_model:
+            raise ValueError(
+                f"expected input shape (batch, chunk_len, {self.d_model}), got {x.shape}"
+            )
+
+        q = self._split_heads(self.query.forward(x))
+        k_new = self._split_heads(self.key.forward(x))
+        v_new = self._split_heads(self.value.forward(x))
+
+        if cache is None:
+            k, v = k_new, v_new
+        else:
+            k_prev, v_prev = cache
+            k = np.concatenate([k_prev, k_new], axis=2)
+            v = np.concatenate([v_prev, v_new], axis=2)
+
+        seq_q = q.shape[2]
+        seq_k = k.shape[2]
+        offset = seq_k - seq_q  # how many already-cached positions precede this chunk
+
+        scale = 1.0 / np.sqrt(self.d_head)
+        scores = (q @ k.transpose(0, 1, 3, 2)) * scale
+
+        # position i (0-indexed within this chunk) is really absolute
+        # position offset+i, and may attend to any absolute position <= itself
+        row_abs = offset + np.arange(seq_q)[:, None]
+        col_abs = np.arange(seq_k)[None, :]
+        causal_mask = col_abs > row_abs
+        scores = np.where(causal_mask, -np.inf, scores)
+
+        weights = softmax(scores, axis=-1)
+        attn_out = weights @ v
+
+        merged = self._merge_heads(attn_out)
+        out = self.out_proj.forward(merged)
+        return out, (k, v)
+
     def parameters_and_grads(self):
         return (
             self.query.parameters_and_grads()
