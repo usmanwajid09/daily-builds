@@ -49,6 +49,14 @@ class LinearRegressionGD:
                 )
 
         self.w_, self.b_ = w, b
+
+        # Loss recorded inside the loop is the *pre-update* loss for that
+        # iteration, so loss_history_[-1] would not actually match the final
+        # w_, b_ returned above. Append one more point computed from the
+        # final parameters so the last history entry is consistent with fit.
+        final_pred = w * x + b
+        self.loss_history_.append(float(np.mean((final_pred - y) ** 2)))
+
         return self
 
     def predict(self, x: np.ndarray) -> np.ndarray:
