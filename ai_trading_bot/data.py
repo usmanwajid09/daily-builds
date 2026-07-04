@@ -90,6 +90,31 @@ def _normalize_header(name: str) -> str:
     return name.strip().lower().replace(" ", "").replace("_", "")
 
 
+# Date formats accepted by load_csv, tried in order. ISO (YYYY-MM-DD) is
+# tried first since it's unambiguous; MM/DD/YYYY covers the common US
+# broker/export format (e.g. legacy Yahoo Finance / many brokerage
+# statements). Anything else raises a clear error rather than silently
+# misparsing day/month.
+_DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y")
+
+
+def _parse_date(raw: str) -> _dt.date:
+    text = raw.strip()
+    iso_candidate = text[:10]
+    try:
+        return _dt.date.fromisoformat(iso_candidate)
+    except ValueError:
+        pass
+    for fmt in _DATE_FORMATS[1:]:
+        try:
+            return _dt.datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(
+        f"could not parse date {raw!r}; expected one of formats: {_DATE_FORMATS}"
+    )
+
+
 def load_csv(path: str) -> OHLCVSeries:
     """Load a daily OHLCV series from a CSV file on disk.
 
@@ -116,7 +141,7 @@ def load_csv(path: str) -> OHLCVSeries:
         has_volume = "volume" in colmap
         for line_no, row in enumerate(reader, start=2):
             try:
-                date = _dt.date.fromisoformat(row[colmap["date"]].strip()[:10])
+                date = _parse_date(row[colmap["date"]])
                 o = float(row[colmap["open"]])
                 h = float(row[colmap["high"]])
                 lo = float(row[colmap["low"]])

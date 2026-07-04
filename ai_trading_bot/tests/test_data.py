@@ -104,3 +104,25 @@ def test_load_csv_no_rows_raises(tmp_path):
     path.write_text("date,open,high,low,close,volume\n")
     with pytest.raises(ValueError, match="no data rows"):
         load_csv(str(path))
+
+
+def test_load_csv_accepts_us_slash_date_format(tmp_path):
+    path = tmp_path / "us_dates.csv"
+    path.write_text(
+        "date,open,high,low,close,volume\n"
+        "01/03/2023,10,11,9,10.5,1000\n"
+        "01/02/2023,9,10,8,9.5,900\n"
+    )
+    s = load_csv(str(path))
+    assert s.dates == [dt.date(2023, 1, 2), dt.date(2023, 1, 3)]
+    np.testing.assert_allclose(s.close, [9.5, 10.5])
+
+
+def test_load_csv_unparseable_date_raises(tmp_path):
+    path = tmp_path / "bad_date.csv"
+    path.write_text(
+        "date,open,high,low,close,volume\n"
+        "not-a-real-date,1,2,0.5,1.5,100\n"
+    )
+    with pytest.raises(ValueError, match="bad data on line"):
+        load_csv(str(path))
