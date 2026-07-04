@@ -81,3 +81,126 @@ no real order placement, anywhere in this milestone. Verified by inspection
 -- the only I/O in the package is `open()` calls in `data.py` for reading/
 writing plain local CSV files. No network calls, no API keys, no broker
 SDK imports.
+
+---
+
+# Self-review — ai-trading-bot (Milestone 2: ML direction model + paper trading, arc complete)
+
+What I checked, and what I found:
+
+1. **scikit-learn wasn't reliably installable in the build sandbox
+   (documented, not "fixed").** `pip install scikit-learn` timed out /
+   left the package missing across two attempts. Rather than block the
+   milestone on a flaky install, implemented logistic regression +
+   feature standardization from scratch in numpy, consistent with the
+   rest of this repo's from-scratch ethos (`linreg_gd`, `gpt_from_scratch`,
+   Milestone 1's own indicators). Documented in README with a note on how
+   to swap in real scikit-learn if it's available in your own environment
+   -- the `fit`/`predict`/`predict_proba`/`transform` interface is
+   intentionally close to scikit-learn's shape.
+
+2. **No look-ahead in the ML pipeline -- verified structurally, not just
+   asserted.** `features.py` only ever uses data through bar `t` to build
+   bar `t`'s features (the label is deliberately about the future, which
+   is the whole point of a *prediction* target). `ml_pipeline.split_dataset`
+   is chronological only -- `test_train_direction_model_end_to_end_shapes`
+   explicitly asserts `train_idx[-1] < test_idx[0]`, i.e. every training
+   row comes strictly before every test row in time. The `StandardScaler`
+   is fit on training rows only (`train_direction_model` calls
+   `StandardScaler().fit(X_train)`, never on the combined or test set) --
+   fitting on the full dataset would leak test-period mean/std into an
+   evaluation meant to measure out-of-sample generalization.
+
+3. **The demo is honest about a near-chance accuracy, on purpose.**
+   `demo_ml.py` prints the majority-class baseline right next to the
+   model's accuracy. On the synthetic random-walk series, accuracy comes
+   out to ~50% (at or slightly below the majority-class baseline of
+   ~53.8%), which is the *correct*, expected result for a model trying to
+   predict direction from simple price/volume features on a series with
+   no real autocorrelation structure -- not a bug, and not something to
+   quietly improve by tuning until the demo "looks good." Called out
+   explicitly in README's new "Limitations" section so it isn't mistaken
+   for a broken pipeline.
+
+4. **Found and worked through a real, non-obvious discrepancy between the
+   two backtest engines -- documented rather than "fixed" away.**
+   Running the same out-of-sample signal through `backtest.run_backtest`
+   (Milestone 1, vectorized, assumes continuous exposure through each
+   bar's return) and `paper_trading.run_mock_paper_trading` (Milestone 2,
+   executes an actual buy/sell at the bar's price) produced very different
+   total returns in `demo_ml.py` (+11.92% vs -25.40% in one run) for a
+   high-turnover (76-trade) signal. Traced this to a genuine modeling
+   difference, not an indexing bug: `run_backtest` credits the bar you
+   first go long with that bar's full price move (idealized "already
+   holding" assumption), while `run_mock_paper_trading` buys in at that
+   bar's actual price and therefore misses it (a more realistic
+   "can't fill at yesterday's price" assumption). Verified the timing
+   itself lines up correctly between the two engines (both start reacting
+   to the same first model prediction at the same original bar) before
+   concluding the difference was about fill price, not an off-by-one.
+   Documented this prominently in both `paper_trading.py`'s docstring and
+   README's new "Two backtest engines" section, with a worked-through test
+   (`test_run_mock_paper_trading_no_lookahead_bar_zero`) pinning down the
+   exact mechanics. Did not try to make the two engines agree -- both are
+   legitimate, and the disagreement itself is useful information for
+   anyone using this repo (treat `run_backtest` as an optimistic upper
+   bound, `run_mock_paper_trading` as the more conservative estimate).
+
+5. **My own first-draft test for the paper-trading no-lookahead behavior
+   was wrong, caught by actually tracing the mechanics by hand** (same
+   category of mistake as Milestone 1's backtest test). Initially expected
+   `run_mock_paper_trading` to behave exactly like `run_backtest` on a
+   contrived 100->200 price jump; the actual (correct) behavior is
+   different for the reason in point 4. Fixed the test's expectation and
+   added an explanatory comment rather than changing the code to match a
+   wrong assumption.
+
+6. **Divergence guard in `LogisticRegressionGD.fit` needed a genuinely
+   extreme test case to actually trigger.** Unlike `linreg_gd`'s linear
+   regression (where the gradient scales with an unbounded residual and
+   can blow up exponentially from a merely-too-large learning rate),
+   logistic regression's gradient is bounded by the sigmoid saturating the
+   error term to [-1, 1] -- so a "normal" bad learning rate just gives bad
+   (but finite) weights, not `nan`/`inf`. Had to use a combined extreme
+   feature scale (1e200) and learning rate (1e200) to actually force a
+   float64 overflow within a few iterations and confirm the guard clause
+   fires. Documented why in the test itself so this doesn't look like
+   arbitrary magic numbers.
+
+7. **Precision/recall edge case: no predicted-positive days.** If the
+   model never predicts "up" on the test set, precision's denominator
+   (`tp + fp`) is 0 -- returns `0.0` rather than `nan`, matching the same
+   "safe default over a crashing/NaN report" pattern used in Milestone 1's
+   `sharpe_ratio`. Covered by
+   `test_classification_metrics_no_predicted_positives_precision_zero`.
+
+8. **`signal_from_predictions`' zero-padding before the test period is
+   documented as padding, not a real decision** -- its docstring explicitly
+   warns callers to slice the resulting equity curve/returns from
+   `test_idx[0]` onward when reporting performance, so the flat training
+   period doesn't get counted as part of the strategy's track record.
+   `demo_ml.py` does this slicing (`bt.equity_curve[test_start:]`).
+
+9. **Not built, on purpose (arc scope ends here):** no ensembling, no
+   feature selection/importance analysis, no cross-validation beyond one
+   chronological split, no walk-forward *retraining* (the model is trained
+   once on the first 70% and evaluated once on the last 30%, rather than
+   periodically retrained as more data arrives). Documented as limitations
+   rather than silently left out.
+
+All 90 tests pass (`python -m pytest ai_trading_bot/tests/`), covering both
+milestones.
+
+## Safety rule compliance (arc-wide, both milestones)
+
+Per `ARC_QUEUE.md`'s standing rule: no live broker connection, no real
+order placement, anywhere in this arc. Verified by inspection across both
+milestones -- the only I/O anywhere in `ai_trading_bot/` is `open()` calls
+in `data.py` for local CSV files. No network calls, no broker SDK imports,
+no API keys, no real account credentials, in either milestone. `PaperAccount`
+in `paper_trading.py` is purely an in-memory dataclass with no external
+side effects.
+
+This is the final milestone for the `ai-trading-bot` arc (2/2 per
+`ARC_QUEUE.md`) -- next up per the queue is `saas-starter` (Stripe
+TEST-mode only, no real payments).
