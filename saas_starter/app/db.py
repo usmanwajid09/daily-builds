@@ -46,6 +46,16 @@ CREATE TABLE IF NOT EXISTS memberships (
 
 CREATE INDEX IF NOT EXISTS idx_memberships_tenant ON memberships(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(user_id);
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id INTEGER NOT NULL UNIQUE REFERENCES tenants(id),
+    plan TEXT NOT NULL DEFAULT 'free' CHECK(plan IN ('free', 'pro')),
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'pending', 'canceled')),
+    stripe_customer_id TEXT,
+    stripe_checkout_session_id TEXT,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -161,3 +171,56 @@ def list_members_for_tenant(conn: sqlite3.Connection, tenant_id: int):
            ORDER BY m.created_at ASC""",
         (tenant_id,),
     ).fetchall()
+
+
+# --- Subscription queries (Milestone 2: billing) ---------------------------
+#
+# Every tenant gets exactly one subscriptions row, created at signup
+# (defaulting to the 'free' plan) by create_default_subscription. Billing
+# routes then update that same row rather than inserting new ones, so
+# "get a tenant's plan" is always a single-row lookup, never an
+# aggregation over history.
+
+def create_default_subscription(conn: sqlite3.Connection, tenant_id: int) -> int:
+    cur = conn.execute(
+        "INSERT INTO subscriptions (tenant_id, plan, status, updated_at) "
+        "VALUES (?, 'free', 'active', ?)",
+        (tenant_id, now_iso()),
+    )
+    return cur.lastrowid
+
+
+def get_subscription(conn: sqlite3.Connection, tenant_id: int):
+    return conn.execute(
+        "SELECT * FROM subscriptions WHERE tenant_id = ?", (tenant_id,)
+    ).fetchone()
+
+
+def set_subscription_pending(
+    conn: sqlite3.Connection, tenant_id: int, plan: str, stripe_checkout_session_id: str
+) -> None:
+    """Mark a tenant's subscription as pending a specific plan upgrade while
+    checkout is in progress (before the webhook confirms payment)."""
+    conn.execute(
+        "UPDATE subscriptions SET plan = ?, status = 'pending', "
+        "stripe_checkout_session_id = ?, updated_at = ? WHERE tenant_id = ?",
+        (plan, stripe_checkout_session_id, now_iso(), tenant_id),
+    )
+
+
+def activate_subscription(
+    conn: sqlite3.Connection, tenant_id: int, plan: str, stripe_customer_id: str | None = None
+) -> None:
+    """Called from the billing webhook once checkout actually completes."""
+    conn.execute(
+        "UPDATE subscriptions SET plan = ?, status = 'active', "
+        "stripe_customer_id = COALESCE(?, stripe_customer_id), updated_at = ? "
+        "WHERE tenant_id = ?",
+        (plan, stripe_customer_id, now_iso(), tenant_id),
+    )
+
+
+def get_subscription_by_checkout_session(conn: sqlite3.Connection, session_id: str):
+    return conn.execute(
+        "SELECT * FROM subscriptions WHERE stripe_checkout_session_id = ?", (session_id,)
+    ).fetchone()
