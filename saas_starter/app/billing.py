@@ -97,6 +97,8 @@ class FakeStripeProvider:
     is genuinely exercised, without needing any real Stripe account.
     """
 
+    SIGNATURE_HEADER = "X-Fake-Signature"
+
     def __init__(self, webhook_secret: str = "test-only-fake-webhook-secret"):
         self.webhook_secret = webhook_secret
 
@@ -157,6 +159,8 @@ class StripeTestProvider:
     be constructed and which enforces that restriction before this
     class's __init__ ever runs.
     """
+
+    SIGNATURE_HEADER = "Stripe-Signature"
 
     def __init__(self, secret_key: str, webhook_secret: str):
         if not secret_key.startswith("sk_test_"):
