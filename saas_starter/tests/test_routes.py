@@ -172,3 +172,28 @@ def test_login_disambiguates_multi_tenant_user(client):
     })
     assert resolved.status_code == 200
     assert resolved.get_json()["tenant"]["slug"] == "acme"
+
+
+def test_signup_race_on_duplicate_email_returns_409_not_500(client, monkeypatch):
+    """Simulates two requests racing past the check-then-insert window on
+    the same email: the second one should hit the sqlite3.IntegrityError
+    safety net and come back as a 409, not an unhandled 500.
+    """
+    import sqlite3
+    from app.routes import auth_routes
+
+    original_create_user = auth_routes.db.create_user
+
+    def racy_create_user(conn, email, password_hash):
+        # Insert a colliding row directly, simulating a concurrent signup
+        # that committed between our uniqueness check and our own insert.
+        conn.execute(
+            "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, 'x')",
+            (email, "already-there"),
+        )
+        return original_create_user(conn, email, password_hash)
+
+    monkeypatch.setattr(auth_routes.db, "create_user", racy_create_user)
+
+    resp = signup(client, email="racer@acme.com")
+    assert resp.status_code == 409

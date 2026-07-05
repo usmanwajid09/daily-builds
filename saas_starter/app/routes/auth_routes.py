@@ -1,9 +1,11 @@
 """Signup / login / session-introspection / tenant-invite endpoints."""
+import secrets
+import sqlite3
+
 from flask import Blueprint, current_app, g, jsonify, request
 
 from .. import db
 from ..auth import (
-    AuthError,
     hash_password,
     is_valid_email,
     issue_token,
@@ -37,20 +39,27 @@ def signup():
         return jsonify(error=str(exc)), 400
 
     db_path = current_app.config["DB_PATH"]
-    with db.connect(db_path) as conn:
-        if db.get_user_by_email(conn, email) is not None:
-            return jsonify(error="email already registered"), 409
+    try:
+        with db.connect(db_path) as conn:
+            if db.get_user_by_email(conn, email) is not None:
+                return jsonify(error="email already registered"), 409
 
-        slug = slugify(org_name)
-        base_slug = slug
-        suffix = 1
-        while db.get_tenant_by_slug(conn, slug) is not None:
-            suffix += 1
-            slug = f"{base_slug}-{suffix}"
+            slug = slugify(org_name)
+            base_slug = slug
+            suffix = 1
+            while db.get_tenant_by_slug(conn, slug) is not None:
+                suffix += 1
+                slug = f"{base_slug}-{suffix}"
 
-        tenant_id = db.create_tenant(conn, org_name, slug)
-        user_id = db.create_user(conn, email, password_hash)
-        db.create_membership(conn, user_id, tenant_id, role="owner")
+            tenant_id = db.create_tenant(conn, org_name, slug)
+            user_id = db.create_user(conn, email, password_hash)
+            db.create_membership(conn, user_id, tenant_id, role="owner")
+    except sqlite3.IntegrityError:
+        # A concurrent signup won the race on the same email or slug between
+        # our check above and this transaction's commit. Rare, but with two
+        # requests racing on check-then-insert it's a real possibility, not
+        # hypothetical -- surface it as a normal conflict rather than a 500.
+        return jsonify(error="email or organization slug already taken, please retry"), 409
 
     token = issue_token(current_app.config["JWT_SECRET"], user_id, tenant_id, "owner")
     return jsonify(
@@ -143,18 +152,22 @@ def invite():
 
     db_path = current_app.config["DB_PATH"]
     temp_password = None
-    with db.connect(db_path) as conn:
-        user = db.get_user_by_email(conn, email)
-        if user is None:
-            import secrets
-            temp_password = secrets.token_urlsafe(9)
-            user_id = db.create_user(conn, email, hash_password(temp_password))
-        else:
-            user_id = user["id"]
-            if db.get_membership(conn, user_id, g.tenant_id) is not None:
-                return jsonify(error="user is already a member of this tenant"), 409
+    try:
+        with db.connect(db_path) as conn:
+            user = db.get_user_by_email(conn, email)
+            if user is None:
+                temp_password = secrets.token_urlsafe(9)
+                user_id = db.create_user(conn, email, hash_password(temp_password))
+            else:
+                user_id = user["id"]
+                if db.get_membership(conn, user_id, g.tenant_id) is not None:
+                    return jsonify(error="user is already a member of this tenant"), 409
 
-        db.create_membership(conn, user_id, g.tenant_id, role=role)
+            db.create_membership(conn, user_id, g.tenant_id, role=role)
+    except sqlite3.IntegrityError:
+        # Same race-condition safety net as signup: two concurrent invites
+        # for the same email+tenant would otherwise surface as a 500.
+        return jsonify(error="user is already a member of this tenant"), 409
 
     resp = {"user_id": user_id, "email": email, "role": role}
     if temp_password:
