@@ -1,0 +1,28 @@
+services:
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      # Same obviously-fake default the app itself uses if this is unset
+      # (see app/__init__.py) -- override for anything beyond local testing.
+      SAAS_JWT_SECRET: "${SAAS_JWT_SECRET:-dev-secret-change-me}"
+      SAAS_DB_PATH: /data/saas_starter.db
+      # Billing (Milestone 2): leave both unset to run against the offline
+      # FakeStripeProvider (the default, and the only path exercised in
+      # CI/tests). Only ever set STRIPE_SECRET_KEY to a Stripe *test*
+      # secret key (starts with sk_test_) -- get_billing_provider() in
+      # app/billing.py refuses to start with a live key.
+      STRIPE_SECRET_KEY: "${STRIPE_SECRET_KEY:-}"
+      STRIPE_WEBHOOK_SECRET: "${STRIPE_WEBHOOK_SECRET:-}"
+    volumes:
+      - saas_starter_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/api/health')"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  saas_starter_data:
