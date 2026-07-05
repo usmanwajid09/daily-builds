@@ -81,18 +81,20 @@ pip install -r requirements.txt
 python -m pytest tests/ -v
 ```
 
-57 tests total. Milestone 1 (29): password hashing/verification edge
+59 tests total. Milestone 1 (29): password hashing/verification edge
 cases, JWT issue/decode (including expiry and wrong-secret rejection),
 the SQLite data layer, and full HTTP-level flows — signup, login
 (including the multi-tenant-login disambiguation path), invite, role
 enforcement (member can't invite), and an explicit cross-tenant
-isolation test. Milestone 2 (+28): billing provider selection (live-key
+isolation test. Milestone 2 (+30): billing provider selection (live-key
 and missing-webhook-secret guards), the fake checkout+webhook signature
 roundtrip (including rejecting bad signatures and malformed payloads),
 the full HTTP billing flow (checkout -> pending -> webhook/simulate ->
 active), plan-tier member-limit gating on `/invite` and its lift on
 upgrade, cross-tenant checkout-session isolation (tenant B can't
-activate tenant A's pending session), and the landing page.
+activate tenant A's pending session), the landing page, and two
+regression tests from self-review (malformed webhook metadata failing
+closed instead of 500).
 
 ## Billing (Milestone 2) — Stripe TEST mode only, never real payments
 
