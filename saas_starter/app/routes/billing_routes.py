@@ -88,6 +88,19 @@ def _apply_completed_checkout(conn: sqlite3.Connection, event: dict) -> tuple[bo
     if not session_id or "tenant_id" not in metadata or "plan" not in metadata:
         return False, "event payload missing session id or tenant/plan metadata"
 
+    try:
+        tenant_id = int(metadata["tenant_id"])
+    except (TypeError, ValueError):
+        # Malformed metadata (non-numeric tenant_id) -- fail closed as an
+        # ignored event, not an unhandled 500. Not attacker-reachable here
+        # (the signature is verified before this function ever runs, and
+        # we control what goes into metadata in create_checkout_session),
+        # but a corrupted/truncated payload should never crash the request.
+        return False, "event metadata.tenant_id is not a valid integer"
+
+    if metadata["plan"] not in PLANS:
+        return False, f"event metadata.plan {metadata['plan']!r} is not a known plan"
+
     # Only activate a subscription we actually have a matching *pending*
     # checkout session for -- guards against a replayed/forged event for a
     # session_id that was never issued by our own /checkout route.
@@ -95,7 +108,6 @@ def _apply_completed_checkout(conn: sqlite3.Connection, event: dict) -> tuple[bo
     if subscription is None:
         return False, f"no pending subscription found for session {session_id!r}"
 
-    tenant_id = int(metadata["tenant_id"])
     if subscription["tenant_id"] != tenant_id:
         return False, "event tenant_id does not match the pending subscription's tenant"
 

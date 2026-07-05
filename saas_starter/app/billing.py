@@ -29,7 +29,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Optional, Protocol
+from typing import Protocol
 
 
 class BillingError(Exception):

@@ -7,7 +7,7 @@ the page can never drift out of sync with what the API actually allows),
 plus a minimal vanilla-JS signup form that calls the real /api/auth/signup
 endpoint -- a working demo, not just a mockup.
 """
-from flask import Blueprint, current_app, render_template
+from flask import Blueprint, render_template
 
 from ..billing import PLANS
 

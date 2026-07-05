@@ -285,3 +285,38 @@ def test_landing_page_renders(client):
     assert b"Free" in resp.data
     assert b"Pro" in resp.data
     assert b"29" in resp.data
+
+
+def test_webhook_rejects_non_numeric_tenant_id_gracefully(client, app):
+    # Regression test: a malformed event.data.object.metadata.tenant_id
+    # (non-numeric) previously crashed int(metadata["tenant_id"]) with an
+    # unhandled ValueError -> 500. Should fail closed as an ignored event.
+    import json
+    provider = app.config["BILLING_PROVIDER"]
+    event = {
+        "type": "checkout.session.completed",
+        "data": {"object": {"id": "fake_cs_x", "customer": "c1",
+                             "metadata": {"tenant_id": "not-a-number", "plan": "pro"}}},
+    }
+    payload = json.dumps(event).encode("utf-8")
+    sig = provider.sign_payload(payload)
+    resp = client.post("/api/billing/webhook", data=payload,
+                        headers={"X-Fake-Signature": sig, "Content-Type": "application/json"})
+    assert resp.status_code == 200
+    assert resp.get_json()["applied"] is False
+
+
+def test_webhook_rejects_unknown_plan_in_metadata(client, app):
+    import json
+    provider = app.config["BILLING_PROVIDER"]
+    event = {
+        "type": "checkout.session.completed",
+        "data": {"object": {"id": "fake_cs_y", "customer": "c1",
+                             "metadata": {"tenant_id": "1", "plan": "enterprise-deluxe"}}},
+    }
+    payload = json.dumps(event).encode("utf-8")
+    sig = provider.sign_payload(payload)
+    resp = client.post("/api/billing/webhook", data=payload,
+                        headers={"X-Fake-Signature": sig, "Content-Type": "application/json"})
+    assert resp.status_code == 200
+    assert resp.get_json()["applied"] is False
