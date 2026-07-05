@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 fit_plot.png
+node_modules/
+*.db
+*.sqlite
+*.sqlite3
+.env
