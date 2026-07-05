@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>saas-starter</title>
+  <style>
+    body { font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 760px; margin: 60px auto; color: #1a1a1a; padding: 0 16px; }
+    h1 { font-size: 1.8rem; margin-bottom: 4px; }
+    .tagline { color: #555; margin-top: 0; }
+    .plans { display: flex; gap: 16px; margin-top: 32px; flex-wrap: wrap; }
+    .plan { border: 1px solid #ddd; border-radius: 8px; padding: 16px; flex: 1; min-width: 200px; }
+    .plan h3 { margin-top: 0; }
+    .price { font-size: 1.5rem; font-weight: bold; }
+    .plan ul { padding-left: 18px; color: #444; font-size: 0.9rem; }
+    form { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin-top: 32px; max-width: 360px; }
+    label { display: block; margin-top: 10px; font-size: 0.9rem; color: #444; }
+    input { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; font-size: 1rem; }
+    button { margin-top: 16px; padding: 10px 16px; font-size: 1rem; cursor: pointer; }
+    #signup-result { margin-top: 16px; font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-all; }
+    .note { color: #777; font-size: 0.8rem; margin-top: 40px; }
+  </style>
+</head>
+<body>
+  <h1>saas-starter</h1>
+  <p class="tagline">A real, working multi-tenant SaaS backend: auth, tenant
+  management, and plan-tier billing -- built as a from-scratch reference,
+  not a copy-pasted template.</p>
+
+  <div class="plans">
+    {% for key, plan in plans.items() %}
+    <div class="plan">
+      <h3>{{ plan.label }}</h3>
+      <div class="price">
+        {% if plan.price_usd == 0 %}Free{% else %}${{ plan.price_usd }}/mo{% endif %}
+      </div>
+      <ul>
+        <li>Up to {{ plan.max_members }} team members</li>
+        <li>Up to {{ plan.max_projects }} projects</li>
+      </ul>
+    </div>
+    {% endfor %}
+  </div>
+
+  <form id="signup-form">
+    <h3 style="margin-top:0;">Create your organization</h3>
+    <label>Organization name
+      <input type="text" name="org_name" required>
+    </label>
+    <label>Email
+      <input type="email" name="email" required>
+    </label>
+    <label>Password
+      <input type="password" name="password" minlength="8" required>
+    </label>
+    <button type="submit">Sign up (free plan)</button>
+    <div id="signup-result"></div>
+  </form>
+
+  <p class="note">
+    Billing runs in Stripe TEST mode only (see /api/billing/plans). This
+    is a starter kit, not a production deployment -- see the repo README
+    for what's in and out of scope.
+  </p>
+
+  <script>
+    document.getElementById('signup-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const form = e.target;
+      const body = {
+        org_name: form.org_name.value,
+        email: form.email.value,
+        password: form.password.value,
+      };
+      const resultEl = document.getElementById('signup-result');
+      resultEl.textContent = 'Signing up...';
+      try {
+        const resp = await fetch('/api/auth/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          resultEl.textContent = 'Error: ' + (data.error || resp.status);
+          return;
+        }
+        resultEl.textContent = 'Signed up. Your JWT (save this, it is not shown again):\n' + data.token;
+      } catch (err) {
+        resultEl.textContent = 'Request failed: ' + err;
+      }
+    });
+  </script>
+</body>
+</html>

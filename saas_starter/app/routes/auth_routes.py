@@ -12,6 +12,7 @@ from ..auth import (
     slugify,
     verify_password,
 )
+from ..billing import plan_limits
 from ..decorators import jwt_required, role_required
 
 bp = Blueprint("auth", __name__, url_prefix="/api/auth")
@@ -54,6 +55,7 @@ def signup():
             tenant_id = db.create_tenant(conn, org_name, slug)
             user_id = db.create_user(conn, email, password_hash)
             db.create_membership(conn, user_id, tenant_id, role="owner")
+            db.create_default_subscription(conn, tenant_id)  # starts on the free plan
     except sqlite3.IntegrityError:
         # A concurrent signup won the race on the same email or slug between
         # our check above and this transaction's commit. Rare, but with two
@@ -154,6 +156,24 @@ def invite():
     temp_password = None
     try:
         with db.connect(db_path) as conn:
+            # Plan-tier feature gating (Milestone 2): a tenant on the free
+            # plan can't invite past its member cap. Checked inside the
+            # same transaction as the rest of this route so the limit is
+            # read from a consistent snapshot, and re-validated by the
+            # UNIQUE constraint + IntegrityError handling below against a
+            # concurrent invite slipping through between this check and
+            # the INSERT (the same race-safety pattern as signup).
+            subscription = db.get_subscription(conn, g.tenant_id)
+            plan = subscription["plan"] if subscription else "free"
+            limits = plan_limits(plan)
+            current_members = db.list_members_for_tenant(conn, g.tenant_id)
+            if len(current_members) >= limits["max_members"]:
+                return jsonify(
+                    error=f"the {plan} plan is limited to {limits['max_members']} members",
+                    upgrade_required=True,
+                    plan=plan,
+                ), 402
+
             user = db.get_user_by_email(conn, email)
             if user is None:
                 temp_password = secrets.token_urlsafe(9)

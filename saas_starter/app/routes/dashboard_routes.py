@@ -7,6 +7,7 @@ parameter an attacker could tamper with to see another tenant's data.
 from flask import Blueprint, current_app, g, jsonify
 
 from .. import db
+from ..billing import plan_limits
 from ..decorators import jwt_required
 
 bp = Blueprint("dashboard", __name__, url_prefix="/api")
@@ -19,17 +20,23 @@ def dashboard():
     with db.connect(db_path) as conn:
         tenant = db.get_tenant(conn, g.tenant_id)
         members = db.list_members_for_tenant(conn, g.tenant_id)
+        subscription = db.get_subscription(conn, g.tenant_id)
 
-    # Stub metrics -- real usage/billing metrics are out of scope for this
-    # milestone (billing itself is a later milestone, Stripe TEST mode only).
+    # Milestone 2: this used to be a hardcoded "free" stub. Now it reflects
+    # the tenant's actual subscription row (created at signup, updated by
+    # the billing webhook), with plan limits pulled from the same PLANS
+    # catalogue the billing routes enforce -- so this can't drift out of
+    # sync with what the API actually allows.
+    plan = subscription["plan"] if subscription else "free"
+    limits = plan_limits(plan)
     return jsonify(
         tenant={"id": tenant["id"], "name": tenant["name"], "slug": tenant["slug"]},
-        plan="free",
+        plan=plan,
         member_count=len(members),
         your_role=g.role,
         widgets=[
-            {"label": "Team members", "value": len(members)},
-            {"label": "Plan", "value": "free"},
+            {"label": "Team members", "value": f"{len(members)} / {limits['max_members']}"},
+            {"label": "Plan", "value": limits["label"]},
             {"label": "Projects", "value": 0},
         ],
     )
