@@ -1,0 +1,21 @@
+text,label,note
+I am writing to formally request a two-week extension on the project deadline due to unforeseen circumstances.,human,"formal register, no contractions, no first-person casualness -- a real human work email"
+"This update is honestly a total game changer for our workflow, ngl.",human,contains an AI-marker-list buzzword ('game changer') plus slang in the same breath -- a real person genuinely talking like this
+Absolutely not doing that again.,human,"very short, single sentence, no contractions to detect, no first-person pronoun"
+"Per our previous correspondence, please find attached the revised quarterly projections for your review.",human,dense corporate-email register a real employee actually writes
+Congratulations on the well-deserved promotion -- thrilled to see your hard work recognized and excited to see what you'll accomplish next.,human,genuine LinkedIn-style congratulations post; shares AI-adjacent enthusiasm/buzzword register despite being human-written
+The mitochondria is the primary site of cellular respiration and ATP synthesis in eukaryotic organisms.,human,textbook-style sentence a student or teacher actually wrote; no personal markers at all
+"Preheat the oven to 425F. Toss the vegetables in olive oil, salt, and pepper. Roast for 25 minutes, stirring once halfway through.",human,"imperative recipe instructions from a real food blogger; no first-person, no contractions"
+Residents in the affected zone should shelter in place until further notice from local authorities.,human,"formal public-safety notice, genuinely human-authored, structurally close to generic AI prose"
+"Furthermore, as I argued in my thesis, the historical record does not support that conclusion.",human,uses an AI-marker word ('furthermore') in an entirely ordinary human academic argument
+Nope.,human,single word; nearly every feature is undefined/degenerate for a one-word input
+"Honestly, I don't think you need to overthink this one -- just try it and see what happens.",ai,"casual register with contractions and no hedge phrases, representing an LLM told to 'sound natural'"
+"Yeah, that's a fair point. Let's break it down step by step so it's less overwhelming.",ai,"first-person-adjacent, contraction-heavy, chatty assistant tone with zero buzzwords"
+"lol fair, ok here's the short version: back it up first, then try the update, then restart.",ai,deliberately slangy assistant reply mimicking a Discord/Slack helper bot
+"Grab a jacket, it's supposed to get pretty cold tonight.",ai,"short, plain, no markers at all -- meant to probe whether the model just defaults to 'human' whenever markers are absent"
+"I'd just double check the settings first, that's usually where this kind of thing goes wrong.",ai,"contraction + first-person + hedge-free, representing a friendly troubleshooting-bot answer"
+"Not gonna lie, this one's a little tricky, but you've got this.",ai,"slang ('not gonna lie', 'gonna') deliberately injected into AI-labeled text"
+"Here's the deal: it works, but only if you restart the app first.",ai,"informal, contraction-heavy explainer sentence, no hedges or buzzwords"
+"Sounds like a rough day, for what it's worth I think you handled it well.",ai,"empathetic short reply, first person absent but casual and human-sounding"
+"Quick heads up: the store closes at 6 today, not 8.",ai,"short, plain, information-only sentence with no stylistic tells either way"
+"Honestly? Just wing it, you'll figure out the rest as you go.",ai,"very short and slangy, meant to be maximally 'human-sounding' AI output"
