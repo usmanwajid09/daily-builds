@@ -4,74 +4,32 @@ from-scratch logistic regression classifier, and report evaluation metrics.
 Usage:
     python -m ai_slop_detector.train
     python -m ai_slop_detector.train --test-size 0.3 --epochs 3000
+
+For a more rigorous evaluation (k-fold cross-validation + a held-out
+hard/adversarial example set), see `python -m ai_slop_detector.evaluate`.
+This script keeps the simple single-split path since it's also what
+produces the `trained_model.json` that `demo.py` loads.
 """
 from __future__ import annotations
 
 import argparse
-import csv
 import json
-import random
 from pathlib import Path
-
-import numpy as np
 
 from ai_slop_detector.classifier import (
     LogisticRegression,
     StandardScaler,
     classification_metrics,
 )
-from ai_slop_detector.features import FEATURE_NAMES, extract_features
+from ai_slop_detector.dataset_utils import (
+    LABEL_TO_INT,
+    load_dataset,
+    rows_to_xy,
+    stratified_split,
+)
+from ai_slop_detector.features import FEATURE_NAMES
 
-DATA_PATH = Path(__file__).parent / "data" / "samples.csv"
 MODEL_PATH = Path(__file__).parent / "trained_model.json"
-
-LABEL_TO_INT = {"human": 0, "ai": 1}
-INT_TO_LABEL = {v: k for k, v in LABEL_TO_INT.items()}
-
-
-def load_dataset(path: Path = DATA_PATH) -> list[tuple[str, str]]:
-    with open(path, encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        rows = [(row["text"], row["label"]) for row in reader]
-    if not rows:
-        raise ValueError(f"No rows loaded from {path}")
-    bad_labels = {label for _, label in rows if label not in LABEL_TO_INT}
-    if bad_labels:
-        raise ValueError(f"Unknown label(s) in dataset: {bad_labels}")
-    return rows
-
-
-def stratified_split(
-    rows: list[tuple[str, str]], test_size: float, seed: int
-) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
-    """Splits `rows` into (train, test), preserving each label's proportion.
-
-    A plain random split on a small, evenly-labeled dataset can still land
-    on a skewed test set by chance; stratifying avoids that and gives a
-    more stable read on precision/recall per class.
-    """
-    rng = random.Random(seed)
-    by_label: dict[str, list[tuple[str, str]]] = {}
-    for row in rows:
-        by_label.setdefault(row[1], []).append(row)
-
-    train, test = [], []
-    for label, group in by_label.items():
-        shuffled = group[:]
-        rng.shuffle(shuffled)
-        n_test = max(1, round(len(shuffled) * test_size))
-        test.extend(shuffled[:n_test])
-        train.extend(shuffled[n_test:])
-
-    rng.shuffle(train)
-    rng.shuffle(test)
-    return train, test
-
-
-def rows_to_xy(rows: list[tuple[str, str]]) -> tuple[np.ndarray, np.ndarray]:
-    X = np.array([extract_features(text).to_array() for text, _ in rows])
-    y = np.array([LABEL_TO_INT[label] for _, label in rows])
-    return X, y
 
 
 def main() -> None:
@@ -104,6 +62,12 @@ def main() -> None:
     _print_metrics(train_metrics)
     print("\n--- Test metrics ---")
     _print_metrics(test_metrics)
+    print(
+        "\nNote: this is a single stratified split on the synthetic "
+        "template-based dataset -- see `python -m ai_slop_detector.evaluate` "
+        "for k-fold cross-validation and an out-of-distribution hard-example "
+        "check, which paint a less flattering (and more honest) picture."
+    )
 
     print("\n--- Feature weights (standardized scale; sign shows ai(+)/human(-) pull) ---")
     for name, weight in sorted(
