@@ -65,3 +65,22 @@ def test_format_classification_report_is_readable_text():
     assert "human" in text
     assert "ai" in text
     assert "accuracy" in text
+
+
+def test_cli_rejects_folds_less_than_2_with_clean_error(tmp_path):
+    # Regression test: previously `--folds 1` bubbled a multi-frame
+    # ValueError traceback from dataset_utils.stratified_k_folds instead of
+    # a clean CLI error. Should now exit non-zero via argparse's error()
+    # with a message naming the actual flag, not a traceback.
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "ai_slop_detector.evaluate", "--folds", "1"],
+        capture_output=True,
+        text=True,
+        cwd=str(HARD_EXAMPLES_PATH.parent.parent.parent),
+    )
+    assert result.returncode != 0
+    assert "Traceback" not in result.stderr
+    assert "--folds must be >= 2" in result.stderr

@@ -127,6 +127,14 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
+    if args.folds < 2:
+        # stratified_k_folds() would raise the same ValueError, but letting
+        # it bubble up produces a multi-frame stack trace pointing at
+        # dataset_utils.py rather than a clean CLI error -- a real bug
+        # found in self-review (see REVIEW.md), fixed here with a friendly
+        # argparse-level error message pointing at the actual flag.
+        parser.error(f"--folds must be >= 2, got {args.folds}")
+
     rows = load_dataset()
     print(f"Loaded {len(rows)} samples from samples.csv for {args.folds}-fold cross-validation")
     fold_reports = run_cross_validation(rows, args.folds, args.epochs, args.lr, args.l2, args.seed)
