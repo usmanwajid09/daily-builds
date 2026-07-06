@@ -123,3 +123,64 @@ def classification_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, 
         "f1": f1,
         **cm,
     }
+
+
+def classification_report(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, dict[str, float]]:
+    """Per-class precision/recall/F1/support, plus macro and weighted
+    averages -- `classification_metrics` only reports the positive ("ai",
+    y=1) class, which hides how the model does on the negative ("human")
+    class when the two aren't simply mirror images of each other (e.g.
+    under class imbalance, which a k-fold split on a held-out hard-example
+    set can produce even if the main training set is balanced).
+    """
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    report: dict[str, dict[str, float]] = {}
+
+    for cls in (0, 1):
+        tp = int(np.sum((y_true == cls) & (y_pred == cls)))
+        fp = int(np.sum((y_true != cls) & (y_pred == cls)))
+        fn = int(np.sum((y_true == cls) & (y_pred != cls)))
+        support = int(np.sum(y_true == cls))
+        precision = tp / (tp + fp) if (tp + fp) else 0.0
+        recall = tp / (tp + fn) if (tp + fn) else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) else 0.0
+        report[str(cls)] = {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "support": support,
+        }
+
+    n = len(y_true)
+    accuracy = float(np.mean(y_true == y_pred)) if n else 0.0
+    macro_precision = (report["0"]["precision"] + report["1"]["precision"]) / 2
+    macro_recall = (report["0"]["recall"] + report["1"]["recall"]) / 2
+    macro_f1 = (report["0"]["f1"] + report["1"]["f1"]) / 2
+
+    report["accuracy"] = {"value": accuracy, "support": n}
+    report["macro_avg"] = {
+        "precision": macro_precision,
+        "recall": macro_recall,
+        "f1": macro_f1,
+        "support": n,
+    }
+    return report
+
+
+def format_classification_report(report: dict[str, dict[str, float]], label_names: dict[int, str]) -> str:
+    lines = [f"{'class':<10}{'precision':>10}{'recall':>10}{'f1':>10}{'support':>10}"]
+    for cls in (0, 1):
+        row = report[str(cls)]
+        name = label_names.get(cls, str(cls))
+        lines.append(
+            f"{name:<10}{row['precision']:>10.3f}{row['recall']:>10.3f}"
+            f"{row['f1']:>10.3f}{row['support']:>10d}"
+        )
+    macro = report["macro_avg"]
+    lines.append(
+        f"{'macro_avg':<10}{macro['precision']:>10.3f}{macro['recall']:>10.3f}"
+        f"{macro['f1']:>10.3f}{macro['support']:>10d}"
+    )
+    lines.append(f"accuracy={report['accuracy']['value']:.3f} (n={report['accuracy']['support']})")
+    return "\n".join(lines)
