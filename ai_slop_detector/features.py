@@ -16,7 +16,21 @@ from dataclasses import dataclass
 
 _WORD_RE = re.compile(r"[A-Za-z']+")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
-_CONTRACTION_RE = re.compile(r"\b[a-zA-Z]+'(?:t|re|ve|ll|d|m|s)\b", re.IGNORECASE)
+# Unambiguous contractions: 't/'re/'ve/'ll/'d/'m never collide with a
+# possessive ("don't", "we're", "I've", "we'll", "I'd", "I'm"). Bare 's is
+# genuinely ambiguous between "is/has" ("it's raining") and a possessive
+# ("today's forecast", "the neighbor's garden") -- so it's only counted
+# when it follows one of a fixed set of words/pronouns that are never used
+# possessively in English (no apostrophe-s possessive form exists for
+# pronouns like it/that/there/who, and interrogatives like what/when/where
+# aren't possessive-able either). This avoids miscounting nouns like
+# "today's" or "neighbor's" as contractions.
+_CONTRACTION_RE = re.compile(r"\b[a-zA-Z]+'(?:t|re|ve|ll|d|m)\b", re.IGNORECASE)
+_UNAMBIGUOUS_S_CONTRACTION_WORDS = {
+    "it", "that", "there", "here", "what", "who", "how", "when", "where",
+    "why", "let", "he", "she",
+}
+_S_CONTRACTION_RE = re.compile(r"\b([a-zA-Z]+)'s\b", re.IGNORECASE)
 _VOWEL_GROUP_RE = re.compile(r"[aeiouy]+", re.IGNORECASE)
 
 # Phrases/words that show up disproportionately often in default-style LLM
@@ -134,6 +148,11 @@ def extract_features(text: str) -> FeatureVector:
     type_token_ratio = len(unique_words) / n_words
 
     n_contractions = len(_CONTRACTION_RE.findall(text))
+    n_s_contractions = sum(
+        1 for stem in _S_CONTRACTION_RE.findall(text)
+        if stem.lower() in _UNAMBIGUOUS_S_CONTRACTION_WORDS
+    )
+    n_contractions += n_s_contractions
     contraction_ratio = n_contractions / n_words * 100
 
     lower_text = text.lower()
