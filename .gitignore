@@ -7,3 +7,4 @@ node_modules/
 *.sqlite
 *.sqlite3
 .env
+trained_model.json
