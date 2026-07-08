@@ -11,11 +11,40 @@ from typing import Optional
 
 
 @dataclass(frozen=True)
+class Player:
+    """A fictional squad member on a Team's roster.
+
+    Rosters are generated data (see data.py), not real players -- same
+    "clearly-synthetic" policy as the fictional clubs themselves.
+    """
+
+    name: str
+    position: str  # one of "GK", "DEF", "MID", "FWD"
+    squad_number: int
+
+    VALID_POSITIONS = ("GK", "DEF", "MID", "FWD")
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("Player.name must not be empty")
+        if self.position not in self.VALID_POSITIONS:
+            raise ValueError(
+                f"Player.position must be one of {self.VALID_POSITIONS}, "
+                f"got {self.position!r}"
+            )
+        if not (1 <= self.squad_number <= 99):
+            raise ValueError(
+                f"Player.squad_number must be 1-99, got {self.squad_number}"
+            )
+
+
+@dataclass(frozen=True)
 class Team:
     """A club competing in the league."""
 
     name: str
     short_code: str  # 2-4 letter code, e.g. "RVR" for "River Athletic"
+    roster: tuple[Player, ...] = field(default_factory=tuple, compare=False, hash=False)
 
     def __post_init__(self) -> None:
         if not self.name.strip():
@@ -43,6 +72,11 @@ class Match:
     away_team: str
     home_score: Optional[int] = None
     away_score: Optional[int] = None
+    scorers: list[dict] = field(default_factory=list)
+    # Each entry: {"team": <team name>, "player": <player name>, "minute": int}
+    # Empty for unplayed matches. Populated by data.py when a match is
+    # simulated as played, or incrementally by live.py while a match is
+    # in progress.
 
     def __post_init__(self) -> None:
         if self.home_team == self.away_team:
@@ -79,6 +113,7 @@ class Match:
             "home_score": self.home_score,
             "away_score": self.away_score,
             "status": self.status,
+            "scorers": list(self.scorers),
         }
 
 
@@ -92,3 +127,9 @@ class Season:
 
     def team_names(self) -> list[str]:
         return [t.name for t in self.teams]
+
+    def find_team(self, name: str) -> Team | None:
+        for t in self.teams:
+            if t.name == name:
+                return t
+        return None
