@@ -91,6 +91,21 @@ def test_generate_season_rejects_odd_team_count():
         generate_season(teams=odd_teams)
 
 
+def test_generate_season_rejects_duplicate_team_names_with_clear_error():
+    # Regression: this used to fail late and confusingly inside Match's
+    # own validation ("home_team and away_team must differ") once the
+    # schedule happened to pair a duplicate-named team against itself,
+    # instead of failing immediately with a clear message.
+    dupes = [
+        Team("A FC", "AAA"),
+        Team("A FC", "BBB"),
+        Team("C FC", "CCC"),
+        Team("D FC", "DDD"),
+    ]
+    with pytest.raises(ValueError, match="duplicate team name"):
+        generate_season(teams=dupes, cutoff_matchday=2)
+
+
 def test_generate_season_match_ids_are_unique_and_sequential():
     season = generate_season()
     ids = [m.id for m in season.matches]

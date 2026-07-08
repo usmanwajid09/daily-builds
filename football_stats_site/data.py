@@ -125,6 +125,14 @@ def generate_season(
     """
     teams = list(teams) if teams is not None else list(DEFAULT_TEAMS)
     team_names = [t.name for t in teams]
+    if len(set(team_names)) != len(team_names):
+        dupes = sorted({n for n in team_names if team_names.count(n) > 1})
+        raise ValueError(
+            f"generate_season: duplicate team name(s) {dupes} -- each team "
+            f"needs a unique name (this used to fail much later, and much "
+            f"less clearly, inside Match validation when a duplicate-named "
+            f"team was scheduled against itself)"
+        )
     schedule = round_robin_schedule(team_names)
     total_matchdays = len(schedule)
     if cutoff_matchday > total_matchdays:

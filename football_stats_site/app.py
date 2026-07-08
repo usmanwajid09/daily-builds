@@ -120,29 +120,33 @@ class FootballStatsApp:
         query = parse_qs(environ.get("QUERY_STRING", ""))
         method = environ.get("REQUEST_METHOD", "GET")
 
-        if method != "GET":
+        # Check route existence before method, so a POST to a nonexistent
+        # path reports 404 (route not found) rather than a misleading 405
+        # (method not allowed on a route that was never valid anyway).
+        handler_name = self.ROUTES.get(path)
+        if handler_name is None:
+            status, body = 404, {"error": f"no such route: {path}"}
+        elif method != "GET":
             status, body = 405, {"error": f"method {method} not allowed, this API is read-only"}
         else:
-            handler_name = self.ROUTES.get(path)
-            if handler_name is None:
-                status, body = 404, {"error": f"no such route: {path}"}
-            else:
-                handler = getattr(self, handler_name)
-                status, body = handler(query)
+            handler = getattr(self, handler_name)
+            status, body = handler(query)
 
         payload = json.dumps(body).encode("utf-8")
-        status_line = {
-            200: "200 OK",
-            400: "400 Bad Request",
-            404: "404 Not Found",
-            405: "405 Method Not Allowed",
-        }[status]
+        status_line = self._STATUS_LINES.get(status, f"{status} Error")
         headers = [
             ("Content-Type", "application/json"),
             ("Content-Length", str(len(payload))),
         ]
         start_response(status_line, headers)
         return [payload]
+
+    _STATUS_LINES = {
+        200: "200 OK",
+        400: "400 Bad Request",
+        404: "404 Not Found",
+        405: "405 Method Not Allowed",
+    }
 
 
 def create_app(season: Season | None = None) -> FootballStatsApp:

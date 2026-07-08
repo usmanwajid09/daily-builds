@@ -107,6 +107,15 @@ def test_write_method_is_405():
     assert resp.status_code == 405
 
 
+def test_write_method_on_unknown_route_is_404_not_405():
+    # Route existence should be checked before method: a POST to a path
+    # that was never a valid route is a 404, not a misleading "405 method
+    # not allowed on this route" (the route was never allowed at all).
+    app = make_test_app()
+    resp = post(app, "/api/nope")
+    assert resp.status_code == 404
+
+
 def test_response_content_type_is_json():
     app = make_test_app()
     resp = get(app, "/api/health")

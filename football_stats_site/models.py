@@ -15,7 +15,7 @@ class Team:
     """A club competing in the league."""
 
     name: str
-    short_code: str  # 3-letter code, e.g. "RVR" for "River Athletic"
+    short_code: str  # 2-4 letter code, e.g. "RVR" for "River Athletic"
 
     def __post_init__(self) -> None:
         if not self.name.strip():
