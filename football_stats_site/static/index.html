@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>football-stats-site</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <h1 class="brand">⚽ Fantasy Premier Division</h1>
+      <div class="search-box">
+        <input id="search-input" type="text" placeholder="Search teams or players…" autocomplete="off">
+        <div id="search-results" class="search-results hidden"></div>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="table">Table</button>
+      <button class="tab-btn" data-tab="matches">Fixtures &amp; Results</button>
+      <button class="tab-btn" data-tab="live">Live<span id="live-dot" class="live-dot hidden"></span></button>
+      <button class="tab-btn" data-tab="scorers">Top Scorers</button>
+    </nav>
+  </header>
+
+  <main id="app">
+    <section id="view-table" class="view active">
+      <h2>League Table</h2>
+      <div id="table-wrap" class="loading">Loading standings…</div>
+    </section>
+
+    <section id="view-matches" class="view">
+      <div class="matches-controls">
+        <h2>Fixtures &amp; Results</h2>
+        <label for="matchday-filter">Matchday:</label>
+        <select id="matchday-filter">
+          <option value="">All</option>
+        </select>
+      </div>
+      <div id="matches-wrap" class="loading">Loading matches…</div>
+    </section>
+
+    <section id="view-live" class="view">
+      <h2>Live Now <span id="live-clock" class="clock"></span></h2>
+      <p class="hint">Simulated live scores — this page polls <code>/api/live</code> every few seconds, and each poll advances the simulated match clock.</p>
+      <div id="live-wrap" class="loading">Checking for live matches…</div>
+    </section>
+
+    <section id="view-scorers" class="view">
+      <h2>Top Scorers</h2>
+      <div id="scorers-wrap" class="loading">Loading top scorers…</div>
+    </section>
+
+    <section id="view-team" class="view">
+      <button id="team-back" class="back-btn">&larr; Back</button>
+      <div id="team-wrap" class="loading">Loading team…</div>
+    </section>
+  </main>
+
+  <footer>
+    <p>Synthetic data, fictional clubs and players — see README for data-source notes.</p>
+  </footer>
+
+<script src="/app.js"></script>
+</body>
+</html>
