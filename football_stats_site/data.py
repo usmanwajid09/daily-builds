@@ -28,7 +28,9 @@ from __future__ import annotations
 import datetime
 import random
 
-from .models import Match, Season, Team
+from dataclasses import replace
+
+from .models import Match, Player, Season, Team
 
 # Ten fictional clubs -- deliberately not real teams, to avoid depending on
 # (or misrepresenting) any real club's identity, branding, or trademarks.
@@ -52,6 +54,59 @@ DEFAULT_SEED = 2026
 # derived from wall-clock time so the generated season -- and every test
 # against it -- is 100% reproducible regardless of when this runs.
 DEFAULT_CUTOFF_MATCHDAY = 11
+
+# Squad composition for the fictional roster generator below: 2 keepers,
+# 5 defenders, 5 midfielders, 4 forwards -- a realistic 16-player squad
+# shape, not tied to any real club's actual roster.
+SQUAD_COMPOSITION: list[tuple[str, int]] = [
+    ("GK", 2),
+    ("DEF", 5),
+    ("MID", 5),
+    ("FWD", 4),
+]
+
+# Deliberately generic, made-up name parts -- not modeled on any real
+# player -- combined to produce plausible-looking fictional full names.
+_FIRST_NAMES = [
+    "Marcus", "Elias", "Théo", "Kwame", "Diego", "Noah", "Sami", "Luca",
+    "Rafael", "Owen", "Kian", "Mateus", "Andrei", "Yusuf", "Hugo",
+    "Bram", "Farid", "Callum", "Nico", "Tomas",
+]
+_LAST_NAMES = [
+    "Okafor", "Larsson", "Moreau", "Petrov", "Alves", "Whitfield",
+    "Nakamura", "Costa", "Bergman", "Delgado", "Reyes", "Kovac",
+    "Bianchi", "Fontaine", "Osei", "Hendricks", "Suárez", "Lindgren",
+    "Marchetti", "Voss",
+]
+
+
+def generate_roster(team_name: str, rng: random.Random) -> tuple[Player, ...]:
+    """Generate a deterministic fictional squad for one team.
+
+    Names are drawn (with replacement, so occasional repeats across
+    different teams are expected and fine) from small generic name-part
+    pools -- not real players. Squad numbers are unique within the
+    roster and drawn from 1-99. ``team_name`` only seeds nothing extra
+    here; determinism comes entirely from the caller-supplied ``rng``,
+    so the same ``random.Random`` instance produces a different roster
+    per team as it's advanced across calls.
+    """
+    used_numbers: set[int] = set()
+
+    def next_number() -> int:
+        while True:
+            n = rng.randint(1, 99)
+            if n not in used_numbers:
+                used_numbers.add(n)
+                return n
+
+    players: list[Player] = []
+    for position, count in SQUAD_COMPOSITION:
+        for _ in range(count):
+            name = f"{rng.choice(_FIRST_NAMES)} {rng.choice(_LAST_NAMES)}"
+            players.append(Player(name=name, position=position, squad_number=next_number()))
+    return tuple(players)
+
 
 
 def round_robin_schedule(team_names: list[str]) -> list[list[tuple[str, str]]]:
@@ -108,6 +163,43 @@ def _simulate_score(rng: random.Random) -> tuple[int, int]:
     return goals(0.62), goals(0.52)
 
 
+# Forwards score most often, then midfielders, then defenders; keepers
+# essentially never do (a rare set-piece scramble aside) -- weights are
+# illustrative, not modeled on real statistics.
+_SCORER_WEIGHT_BY_POSITION = {"FWD": 6, "MID": 3, "DEF": 1, "GK": 0}
+
+
+def _assign_scorers(
+    rng: random.Random, team_name: str, roster: tuple, num_goals: int
+) -> list[dict]:
+    """Attribute ``num_goals`` goals to players on ``roster``, each with a
+    distinct simulated minute (1-90, sorted ascending).
+
+    Weighted toward attacking positions. Falls back to an unweighted
+    choice if a roster has no outfield players with positive weight
+    (shouldn't happen with ``SQUAD_COMPOSITION``, but keeps this
+    function from crashing on a hand-built roster in a test).
+    """
+    if num_goals == 0 or not roster:
+        return []
+
+    weights = [_SCORER_WEIGHT_BY_POSITION.get(p.position, 1) for p in roster]
+    if sum(weights) == 0:
+        weights = [1] * len(roster)
+
+    minutes = sorted(rng.sample(range(1, 91), k=min(num_goals, 90)))
+    # If num_goals > 90 (never happens given the capped goals() model,
+    # but guard anyway) pad with 90th-minute goals rather than crashing.
+    while len(minutes) < num_goals:
+        minutes.append(90)
+
+    events = []
+    for minute in minutes:
+        scorer = rng.choices(roster, weights=weights, k=1)[0]
+        events.append({"team": team_name, "player": scorer.name, "minute": minute})
+    return events
+
+
 def generate_season(
     teams: list[Team] | None = None,
     *,
@@ -144,6 +236,16 @@ def generate_season(
     rng = random.Random(seed)
     kickoff_slots = ["12:30", "15:00", "17:30", "20:00"]
 
+    # Give every team a deterministic fictional roster (milestone 2:
+    # needed for scorer events and the team-detail/search API). Teams
+    # passed in already carrying a roster (e.g. a test building its own
+    # squads) are left untouched rather than overwritten.
+    rostered_teams: list[Team] = [
+        t if t.roster else replace(t, roster=generate_roster(t.name, rng))
+        for t in teams
+    ]
+    roster_by_name = {t.name: t.roster for t in rostered_teams}
+
     matches: list[Match] = []
     match_id = 1
     for matchday_index, pairings in enumerate(schedule, start=1):
@@ -154,8 +256,14 @@ def generate_season(
         for home, away in pairings:
             home_score: int | None
             away_score: int | None
+            scorers: list[dict] = []
             if played:
                 home_score, away_score = _simulate_score(rng)
+                scorers = _assign_scorers(
+                    rng, home, roster_by_name.get(home, ()), home_score
+                ) + _assign_scorers(
+                    rng, away, roster_by_name.get(away, ()), away_score
+                )
             else:
                 home_score, away_score = None, None
             matches.append(
@@ -168,8 +276,9 @@ def generate_season(
                     away_team=away,
                     home_score=home_score,
                     away_score=away_score,
+                    scorers=scorers,
                 )
             )
             match_id += 1
 
-    return Season(name=name, teams=teams, matches=matches)
+    return Season(name=name, teams=rostered_teams, matches=matches)

@@ -88,3 +88,34 @@ def compute_standings(matches: list[Match], team_names: list[str]) -> list[dict]
         key=lambda r: (-r.points, -r.goal_difference, -r.goals_for, r.team),
     )
     return [r.to_dict(position=i + 1) for i, r in enumerate(ordered)]
+
+
+def top_scorers(matches: list[Match], limit: int | None = None) -> list[dict]:
+    """Aggregate individual goal-scorer events across all played matches
+    into a golden-boot-style ranking.
+
+    Sorted by goals scored (desc), then player name (asc) as a
+    deterministic tie-break, matching the alphabetical final tie-break
+    convention used in ``compute_standings``. Only looks at
+    ``Match.scorers`` -- matches with no scorer events recorded (e.g. an
+    older ``Season`` built before milestone 2, or a synthetic match built
+    by hand in a test without scorer data) simply don't contribute,
+    rather than raising.
+    """
+    tallies: dict[tuple[str, str], int] = {}
+    for match in matches:
+        for event in match.scorers:
+            key = (event["player"], event["team"])
+            tallies[key] = tallies.get(key, 0) + 1
+
+    # kv[0][0] is the player name; guard against a None player (a
+    # scorer event with no attributed name, e.g. an empty roster edge
+    # case) since sorting a mix of str and None would otherwise crash
+    # with a TypeError.
+    ranked = sorted(tallies.items(), key=lambda kv: (-kv[1], kv[0][0] or ""))
+    if limit is not None:
+        ranked = ranked[:limit]
+    return [
+        {"player": player, "team": team, "goals": goals}
+        for (player, team), goals in ranked
+    ]

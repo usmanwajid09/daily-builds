@@ -80,3 +80,90 @@ once home and once away) is verified combinatorially in
 `tests/test_data.py`, not just spot-checked.
 
 Total: 39 tests (`pytest football_stats_site/tests/ -v`), all passing.
+
+## Milestone 2 (2026-07-08) -- rosters/scorers, live simulation, new API routes, frontend
+
+Read the full branch diff against `main` (19 files, ~2150 lines added)
+before merging, and ran `pyflakes` over every module. Found and fixed
+three real issues.
+
+### Fixed
+
+1. **Invalid JSON on a 404 whenever the request path contained an
+   apostrophe (`static_site.py`).** The static file server's error
+   helper built its JSON body by hand with
+   `f'{{"error": {message!r}}}'.replace("'", '"')` instead of
+   `json.dumps`. Python's `repr()` switches to double-quote delimiters
+   (without escaping) when a string itself contains a single quote, so
+   for a request like `GET /don't-exist.js` the blanket
+   `.replace("'", '"')` turned that *inner* apostrophe into a stray,
+   unescaped double quote -- producing a response body that isn't valid
+   JSON at all (confirmed: `json.loads` raises
+   `Expecting ',' delimiter`). Any JSON-parsing client hitting a 404 for
+   a path with an apostrophe in it would get a parse error instead of a
+   clean error message. Fixed by using `json.dumps({"error": message})`
+   like `app.py` already does, and added a regression test
+   (`test_404_error_body_is_valid_json_even_when_path_contains_an_apostrophe`).
+
+2. **Unused import (`pyflakes`-caught).** `live.py` imported
+   `dataclasses.field` but never used it (the `_LiveMatchPlan` dataclass
+   only has required fields). Removed the dead import.
+
+3. **Stale API docstring (same class of bug flagged in milestone 1's
+   review).** `app.py`'s module docstring still only listed milestone
+   1's six routes; the five new milestone-2 routes
+   (`/api/teams/<name>`, `/api/players`, `/api/search`, `/api/top-scorers`,
+   `/api/live`) were undocumented at the top of the file, even though
+   they were fully documented in the README. Updated the docstring to
+   list every route and the current error-status behavior.
+
+### Also fixed (smaller, hardening)
+
+- `standings.top_scorers` sorted by `(-goals, player_name)`, which would
+  raise `TypeError: '<' not supported between instances of 'NoneType'
+  and 'str'` if any scorer event ever had `player: None` (e.g. an empty
+  roster edge case). Not reachable via `generate_season()` today (every
+  team always gets a 16-player roster), but `top_scorers` is a general
+  utility over `Match.scorers`, and `live.py`'s `_pick_scorer` *does*
+  return `None` for an empty roster in principle. Changed the sort key
+  to `player_name or ""` and added a regression test so this stays
+  fixed if a future caller ever hits the edge case.
+
+### Considered and left as-is
+
+- **`LiveScoreSimulator.minutes_per_tick` has no validation** (e.g. `0`
+  would mean the clock never advances). Not reachable through the
+  public API today -- `/api/live` always constructs the simulator with
+  the default -- so left unvalidated rather than adding a guard for an
+  input path that doesn't exist yet. Would need revisiting if
+  `minutes_per_tick` is ever exposed as a query parameter.
+- **The scorer-position weighting table
+  (`{"FWD": 6, "MID": 3, "DEF": 1, "GK": 0}`) is duplicated** between
+  `data.py` (historical goals) and `live.py` (simulated live goals).
+  Considered extracting to a shared constant, but the two modules
+  intentionally have separate, decoupled simulation models (season
+  generation happens once at startup; live simulation is a completely
+  separate deterministic plan keyed off a different seed) and forcing a
+  shared import would couple them for a two-line table. Left as
+  intentional, minor duplication.
+- **Live-simulated score changes aren't reflected in
+  `/api/matches`/`/api/fixtures`/`/api/results`.** By design: the live
+  simulator never mutates `Season.matches`, so while a match is "live"
+  it still shows as `SCHEDULED` with no score everywhere except the
+  dedicated `/api/live` endpoint and the frontend's Live tab. This is
+  documented as a limitation in the README rather than silently
+  papered over with a fake merge.
+- **No client-side routing / deep links** in the vanilla-JS frontend --
+  a bookmarked or refreshed URL for a specific team doesn't restore
+  that view; the static server's SPA fallback just serves the Table tab
+  shell. Documented as a limitation in the README; adding real routing
+  would mean either a hash-router or history API integration, which
+  felt like scope creep for a build with no framework and no build
+  step.
+
+Total: 89 tests (`pytest football_stats_site/tests/ -v`), all passing,
+plus a clean `pyflakes` pass. Also manually verified end-to-end against
+a running `wsgiref` dev server via `curl`: `index.html`/`styles.css`/
+`app.js` are served byte-for-byte identical to the source files, every
+new API route responds with the expected shape, and requesting an
+unknown static asset correctly 404s.
