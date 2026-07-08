@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import pytest
 
 from football_stats_site.models import Match
-from football_stats_site.standings import compute_standings
+from football_stats_site.standings import compute_standings, top_scorers
 
 
 def test_standings_ignores_unplayed_matches():
@@ -88,3 +88,51 @@ def test_standings_points_total_conserved():
     table = compute_standings(matches, ["A", "B", "C", "D"])
     total_points = sum(row["points"] for row in table)
     assert total_points == 3 + 2  # one decisive result (3) + one draw (1+1)
+
+
+def test_top_scorers_ranks_by_goals_desc_then_name_asc():
+    matches = [
+        Match(
+            1, 1, "2026-01-01", "15:00", "A", "B",
+            home_score=2, away_score=1,
+            scorers=[
+                {"team": "A", "player": "Zed", "minute": 10},
+                {"team": "A", "player": "Zed", "minute": 50},
+                {"team": "B", "player": "Amy", "minute": 30},
+            ],
+        ),
+        Match(
+            2, 2, "2026-01-08", "15:00", "A", "C",
+            home_score=1, away_score=1,
+            scorers=[
+                {"team": "A", "player": "Amy", "minute": 20},
+                {"team": "C", "player": "Amy", "minute": 60},
+            ],
+        ),
+    ]
+    ranking = top_scorers(matches)
+    assert ranking[0] == {"player": "Zed", "team": "A", "goals": 2}
+    # two different "Amy"s on different teams are distinct scorers
+    assert {"player": "Amy", "team": "B", "goals": 1} in ranking
+    assert {"player": "Amy", "team": "A", "goals": 1} in ranking
+    assert {"player": "Amy", "team": "C", "goals": 1} in ranking
+
+
+def test_top_scorers_respects_limit():
+    matches = [
+        Match(
+            1, 1, "2026-01-01", "15:00", "A", "B",
+            home_score=3, away_score=0,
+            scorers=[
+                {"team": "A", "player": p, "minute": i + 1}
+                for i, p in enumerate(["P1", "P2", "P3"])
+            ],
+        ),
+    ]
+    assert len(top_scorers(matches, limit=2)) == 2
+    assert len(top_scorers(matches)) == 3
+
+
+def test_top_scorers_empty_for_matches_with_no_scorer_data():
+    matches = [Match(1, 1, "2026-01-01", "15:00", "A", "B", home_score=1, away_score=0)]
+    assert top_scorers(matches) == []
