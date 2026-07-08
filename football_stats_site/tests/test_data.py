@@ -7,8 +7,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import pytest
 
+import random
+
 from football_stats_site.data import (
     DEFAULT_TEAMS,
+    SQUAD_COMPOSITION,
+    generate_roster,
     generate_season,
     round_robin_schedule,
 )
@@ -118,3 +122,79 @@ def test_generate_season_scores_are_non_negative_and_bounded():
         if m.is_played:
             assert 0 <= m.home_score <= 8
             assert 0 <= m.away_score <= 8
+
+
+def test_generate_roster_has_expected_composition_and_unique_numbers():
+    roster = generate_roster("Test FC", random.Random(1))
+    expected_size = sum(count for _pos, count in SQUAD_COMPOSITION)
+    assert len(roster) == expected_size
+
+    positions = Counter(p.position for p in roster)
+    for pos, count in SQUAD_COMPOSITION:
+        assert positions[pos] == count
+
+    numbers = [p.squad_number for p in roster]
+    assert len(numbers) == len(set(numbers)), "squad numbers must be unique"
+    assert all(1 <= n <= 99 for n in numbers)
+
+
+def test_generate_roster_deterministic_for_same_rng_state():
+    r1 = generate_roster("Team A", random.Random(42))
+    r2 = generate_roster("Team A", random.Random(42))
+    assert [(p.name, p.position, p.squad_number) for p in r1] == [
+        (p.name, p.position, p.squad_number) for p in r2
+    ]
+
+
+def test_generate_season_gives_every_team_a_roster():
+    season = generate_season()
+    for team in season.teams:
+        assert len(team.roster) == sum(c for _p, c in SQUAD_COMPOSITION)
+
+
+def test_generate_season_preserves_caller_supplied_roster():
+    from football_stats_site.models import Player
+
+    custom_roster = (Player("Custom Player", "FWD", 99),)
+    teams = [Team(t.name, t.short_code, roster=custom_roster if i == 0 else ())
+             for i, t in enumerate(DEFAULT_TEAMS)]
+    season = generate_season(teams=teams)
+    assert season.teams[0].roster == custom_roster
+    # every other team still got an auto-generated roster, not left empty
+    assert all(len(t.roster) > 0 for t in season.teams[1:])
+
+
+def test_generate_season_scorer_goal_counts_match_recorded_score():
+    season = generate_season()
+    played = [m for m in season.matches if m.is_played]
+    assert played, "expected at least one played match for this test to mean anything"
+    for m in played:
+        home_goals = sum(1 for e in m.scorers if e["team"] == m.home_team)
+        away_goals = sum(1 for e in m.scorers if e["team"] == m.away_team)
+        assert home_goals == m.home_score, m
+        assert away_goals == m.away_score, m
+        # scorers must belong to the scoring team's actual roster
+        home_names = {p.name for p in season.find_team(m.home_team).roster}
+        away_names = {p.name for p in season.find_team(m.away_team).roster}
+        for event in m.scorers:
+            if event["team"] == m.home_team:
+                assert event["player"] in home_names
+            else:
+                assert event["player"] in away_names
+            assert 1 <= event["minute"] <= 90
+
+
+def test_generate_season_unplayed_matches_have_no_scorers():
+    season = generate_season()
+    fixtures = [m for m in season.matches if not m.is_played]
+    assert fixtures
+    assert all(m.scorers == [] for m in fixtures)
+
+
+def test_generate_season_is_fully_deterministic_including_rosters_and_scorers():
+    s1 = generate_season()
+    s2 = generate_season()
+    r1 = [[(p.name, p.position, p.squad_number) for p in t.roster] for t in s1.teams]
+    r2 = [[(p.name, p.position, p.squad_number) for p in t.roster] for t in s2.teams]
+    assert r1 == r2
+    assert [m.scorers for m in s1.matches] == [m.scorers for m in s2.matches]
