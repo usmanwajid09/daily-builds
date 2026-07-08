@@ -18,7 +18,7 @@ deterministic and fast to test (no ``sleep()``/timing flakiness).
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .models import Match, Season
 

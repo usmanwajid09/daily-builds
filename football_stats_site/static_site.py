@@ -11,6 +11,7 @@ shell instead of 404ing).
 """
 from __future__ import annotations
 
+import json
 import os
 from typing import Callable
 
@@ -27,7 +28,13 @@ _DEFAULT_CONTENT_TYPE = "application/octet-stream"
 
 
 def _json_error(status: str, message: str) -> tuple[str, list[tuple[str, str]], bytes]:
-    body = f'{{"error": {message!r}}}'.replace("'", '"').encode("utf-8")
+    # Use json.dumps rather than hand-rolling the JSON string: an
+    # earlier version built this with repr()+str.replace("'", '"'),
+    # which produced invalid JSON whenever `message` contained an
+    # apostrophe (e.g. a 404 for a path like "/don't-exist.js" -- the
+    # apostrophe in the echoed path got turned into a stray unescaped
+    # double quote, breaking the response for any JSON client).
+    body = json.dumps({"error": message}).encode("utf-8")
     headers = [("Content-Type", "application/json"), ("Content-Length", str(len(body)))]
     return status, headers, body
 

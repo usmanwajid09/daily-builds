@@ -73,3 +73,15 @@ def test_write_method_is_405(static_dir):
     app = StaticFileApp(static_dir)
     resp = post(app, "/")
     assert resp.status_code == 405
+
+
+def test_404_error_body_is_valid_json_even_when_path_contains_an_apostrophe(static_dir):
+    # Regression test: an earlier version of _json_error built the JSON
+    # body with repr()+str.replace("'", '"') instead of json.dumps,
+    # which produced invalid JSON whenever the (echoed) request path
+    # contained an apostrophe.
+    app = StaticFileApp(static_dir)
+    resp = get(app, "/don't-exist.js")
+    assert resp.status_code == 404
+    body = resp.json()  # raises if the body isn't valid JSON
+    assert "don't-exist.js" in body["error"]

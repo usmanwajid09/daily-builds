@@ -166,7 +166,7 @@ curl http://127.0.0.1:8000/api/live   # poll repeatedly to watch it advance
 python3 -m pytest football_stats_site/tests/ -v
 ```
 
-87 tests: everything from milestone 1 (data-model validation,
+89 tests: everything from milestone 1 (data-model validation,
 round-robin schedule correctness verified combinatorially, standings
 computation) plus milestone 2's roster/scorer generation (goal counts
 always match recorded scores, scorers always drawn from the actual

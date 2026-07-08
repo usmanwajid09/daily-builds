@@ -108,7 +108,11 @@ def top_scorers(matches: list[Match], limit: int | None = None) -> list[dict]:
             key = (event["player"], event["team"])
             tallies[key] = tallies.get(key, 0) + 1
 
-    ranked = sorted(tallies.items(), key=lambda kv: (-kv[1], kv[0][0]))
+    # kv[0][0] is the player name; guard against a None player (a
+    # scorer event with no attributed name, e.g. an empty roster edge
+    # case) since sorting a mix of str and None would otherwise crash
+    # with a TypeError.
+    ranked = sorted(tallies.items(), key=lambda kv: (-kv[1], kv[0][0] or ""))
     if limit is not None:
         ranked = ranked[:limit]
     return [

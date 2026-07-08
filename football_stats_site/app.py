@@ -14,8 +14,16 @@ Routes:
     GET /api/matches   [?matchday=][?team=]  -> all matches
     GET /api/fixtures  [?matchday=][?team=]  -> unplayed matches only
     GET /api/results   [?matchday=][?team=]  -> played matches only
+    GET /api/teams/<name>          -> team detail: roster, standing, form, fixtures
+    GET /api/players   [?team=][?q=|?search=]  -> all players, filterable
+    GET /api/search?q=             -> combined team + player search
+    GET /api/top-scorers [?limit=] -> golden boot ranking
+    GET /api/live                  -> simulated live matchday; each GET ticks
+                                       the clock forward, see live.py
 
-Any other path returns 404; a non-integer ``matchday`` returns 400.
+Any other path returns 404; a non-integer ``matchday``/``limit`` returns
+400; an unknown team name (in ``?team=`` or ``/api/teams/<name>``)
+returns 404 with the list of known team names.
 """
 from __future__ import annotations
 

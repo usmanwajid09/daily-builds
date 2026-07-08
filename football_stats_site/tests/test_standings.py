@@ -136,3 +136,22 @@ def test_top_scorers_respects_limit():
 def test_top_scorers_empty_for_matches_with_no_scorer_data():
     matches = [Match(1, 1, "2026-01-01", "15:00", "A", "B", home_score=1, away_score=0)]
     assert top_scorers(matches) == []
+
+
+def test_top_scorers_does_not_crash_on_a_none_player_name():
+    # A scorer event with no attributed player name (e.g. an empty
+    # roster edge case upstream) shouldn't crash the sort with a
+    # None-vs-str TypeError -- it should just sort last among ties.
+    matches = [
+        Match(
+            1, 1, "2026-01-01", "15:00", "A", "B",
+            home_score=2, away_score=0,
+            scorers=[
+                {"team": "A", "player": None, "minute": 10},
+                {"team": "A", "player": "Amy", "minute": 50},
+            ],
+        ),
+    ]
+    ranking = top_scorers(matches)
+    assert {"player": "Amy", "team": "A", "goals": 1} in ranking
+    assert {"player": None, "team": "A", "goals": 1} in ranking
