@@ -135,7 +135,7 @@ def test_delete_task(conn):
 
 
 def test_transaction_rolls_back_on_exception(conn):
-    wid = db.create_workspace(conn, "Acme", "acme")
+    db.create_workspace(conn, "Acme", "acme")
     conn.commit()
     with pytest.raises(ValueError):
         with db.transaction(conn):

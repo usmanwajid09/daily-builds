@@ -266,3 +266,20 @@ def test_disconnect_cleans_up_subscription(env):
         assert event["task"]["title"] == "Still works"
     finally:
         survivor.close()
+
+
+def test_subscribe_rejects_boolean_project_id(env):
+    """Same bool-is-an-int trap as the REST position field, on the WS
+    side's project_id validation."""
+    rest_client, ws_server = env
+    account = signup(rest_client)
+
+    ws = WSClient("127.0.0.1", ws_server.port)
+    try:
+        ws.send_json({"type": "auth", "token": account["token"]})
+        ws.recv_json()
+        ws.send_json({"type": "subscribe", "project_id": True})
+        reply = ws.recv_json()
+        assert reply == {"type": "error", "message": "project_id must be an int"}
+    finally:
+        ws.close()

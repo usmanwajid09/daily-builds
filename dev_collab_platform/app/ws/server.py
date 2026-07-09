@@ -38,29 +38,66 @@ from . import protocol
 logger = logging.getLogger("dev_collab_platform.ws")
 
 
+class ClientConnection:
+    """Wraps one accepted socket plus a write lock.
+
+    A connection's own thread (replying to auth/subscribe messages) and
+    the Broadcaster (pushing task events from whichever REST request
+    thread triggered them) can both want to write to the *same*
+    connection at close to the same instant. Two threads calling
+    sock.sendall() concurrently on one socket isn't safe -- the kernel
+    can interleave the two write() calls, corrupting the WebSocket frame
+    stream on the wire even though each individual sendall() call looks
+    atomic in Python. Every write to this connection, regardless of
+    which thread it comes from, must go through `send()` so they're
+    serialized by `write_lock`.
+
+    (Plain socket.socket objects don't support arbitrary attribute
+    assignment -- there's no per-socket __dict__ in CPython's C
+    implementation -- hence this wrapper instead of e.g. `sock.lock = ...`.)
+    """
+
+    def __init__(self, sock: socket.socket):
+        self.sock = sock
+        self.write_lock = threading.Lock()
+
+    def send(self, data: bytes) -> None:
+        with self.write_lock:
+            self.sock.sendall(data)
+
+    def send_json(self, message: dict) -> None:
+        self.send(protocol.encode_frame(json.dumps(message).encode("utf-8")))
+
+    def close(self) -> None:
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
 class Broadcaster:
-    """Thread-safe registry of project_id -> set of subscribed sockets."""
+    """Thread-safe registry of project_id -> set of subscribed connections."""
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._channels = {}  # project_id -> set[socket.socket]
+        self._channels = {}  # project_id -> set[ClientConnection]
 
-    def subscribe(self, project_id: int, sock: socket.socket) -> None:
+    def subscribe(self, project_id: int, conn: ClientConnection) -> None:
         with self._lock:
-            self._channels.setdefault(project_id, set()).add(sock)
+            self._channels.setdefault(project_id, set()).add(conn)
 
-    def unsubscribe(self, project_id: int, sock: socket.socket) -> None:
+    def unsubscribe(self, project_id: int, conn: ClientConnection) -> None:
         with self._lock:
             subs = self._channels.get(project_id)
             if subs is not None:
-                subs.discard(sock)
+                subs.discard(conn)
                 if not subs:
                     del self._channels[project_id]
 
-    def unsubscribe_all(self, sock: socket.socket) -> None:
+    def unsubscribe_all(self, conn: ClientConnection) -> None:
         with self._lock:
             for project_id in list(self._channels.keys()):
-                self._channels[project_id].discard(sock)
+                self._channels[project_id].discard(conn)
                 if not self._channels[project_id]:
                     del self._channels[project_id]
 
@@ -68,22 +105,22 @@ class Broadcaster:
         with self._lock:
             return len(self._channels.get(project_id, ()))
 
-    def broadcast(self, project_id: int, message: dict, exclude: socket.socket = None) -> int:
-        """Send `message` (JSON) to every socket subscribed to project_id.
-        Returns the number of sockets it was actually sent to. Dead
-        sockets are dropped silently -- broadcast is best-effort."""
+    def broadcast(self, project_id: int, message: dict, exclude: ClientConnection = None) -> int:
+        """Send `message` (JSON) to every connection subscribed to
+        project_id. Returns how many it was actually sent to. Dead
+        connections are dropped silently -- broadcast is best-effort."""
         with self._lock:
             subs = list(self._channels.get(project_id, ()))
         payload = protocol.encode_frame(json.dumps(message).encode("utf-8"))
         sent = 0
-        for sock in subs:
-            if sock is exclude:
+        for conn in subs:
+            if conn is exclude:
                 continue
             try:
-                sock.sendall(payload)
+                conn.send(payload)
                 sent += 1
             except OSError:
-                self.unsubscribe(project_id, sock)
+                self.unsubscribe(project_id, conn)
         return sent
 
 
@@ -93,10 +130,6 @@ class ConnectionState:
         self.user_id = None
         self.workspace_id = None
         self.role = None
-
-
-def _send_json(sock: socket.socket, message: dict) -> None:
-    sock.sendall(protocol.encode_frame(json.dumps(message).encode("utf-8")))
 
 
 class WebSocketServer:
@@ -109,7 +142,7 @@ class WebSocketServer:
                  broadcaster: Broadcaster = None):
         self.host = host
         self.port = port
-        self.conn_factory = conn_factory  # callable() -> sqlite3.Connection
+        self.conn_factory = conn_factory  # callable() -> sqlite3.Connection (DB, not socket)
         self.jwt_secret = jwt_secret
         self.broadcaster = broadcaster if broadcaster is not None else Broadcaster()
         self._server_sock = None
@@ -151,12 +184,11 @@ class WebSocketServer:
             raise TimeoutError("ws server did not become ready in time")
 
     def _handle_client(self, sock: socket.socket) -> None:
-        state = ConnectionState()
         try:
             headers = protocol.parse_handshake_request(sock)
             protocol.validate_handshake_headers(headers)
             response = protocol.build_handshake_response(headers["sec-websocket-key"])
-            sock.sendall(response)
+            sock.sendall(response)  # handshake response: no other writer exists yet
         except protocol.WebSocketError as exc:
             logger.debug("handshake failed: %s", exc)
             sock.close()
@@ -165,94 +197,97 @@ class WebSocketServer:
             sock.close()
             return
 
+        conn = ClientConnection(sock)
+        state = ConnectionState()
         try:
-            self._message_loop(sock, state)
+            self._message_loop(conn, state)
         except protocol.ConnectionClosed:
             pass
         except protocol.WebSocketError as exc:
             logger.debug("protocol error, closing: %s", exc)
         finally:
-            self.broadcaster.unsubscribe_all(sock)
-            try:
-                sock.close()
-            except OSError:
-                pass
+            self.broadcaster.unsubscribe_all(conn)
+            conn.close()
 
-    def _message_loop(self, sock: socket.socket, state: ConnectionState) -> None:
-        conn = self.conn_factory()
+    def _message_loop(self, conn: ClientConnection, state: ConnectionState) -> None:
+        db_conn = self.conn_factory()
         try:
             while True:
-                opcode, payload = protocol.decode_frame(sock)
+                opcode, payload = protocol.decode_frame(conn.sock)
 
                 if opcode == protocol.OPCODE_CLOSE:
+                    try:
+                        conn.send(protocol.encode_frame(payload, opcode=protocol.OPCODE_CLOSE))
+                    except OSError:
+                        pass  # peer may already be gone; closing below is still correct
                     raise protocol.ConnectionClosed("client sent close frame")
                 if opcode == protocol.OPCODE_PING:
-                    sock.sendall(protocol.encode_frame(payload, opcode=protocol.OPCODE_PONG))
+                    conn.send(protocol.encode_frame(payload, opcode=protocol.OPCODE_PONG))
                     continue
                 if opcode == protocol.OPCODE_PONG:
                     continue
                 if opcode != protocol.OPCODE_TEXT:
-                    _send_json(sock, {"type": "error", "message": "only text frames are supported"})
+                    conn.send_json({"type": "error", "message": "only text frames are supported"})
                     continue
 
                 try:
                     message = json.loads(payload.decode("utf-8"))
                 except (ValueError, UnicodeDecodeError):
-                    _send_json(sock, {"type": "error", "message": "invalid JSON"})
+                    conn.send_json({"type": "error", "message": "invalid JSON"})
                     continue
 
-                self._dispatch(sock, state, conn, message)
+                self._dispatch(conn, state, db_conn, message)
         finally:
-            conn.close()
+            db_conn.close()
 
-    def _dispatch(self, sock, state: ConnectionState, conn, message: dict) -> None:
+    def _dispatch(self, conn: ClientConnection, state: ConnectionState, db_conn, message: dict) -> None:
         msg_type = message.get("type")
 
         if msg_type == "auth":
-            self._handle_auth(sock, state, message)
+            self._handle_auth(conn, state, message)
             return
 
         if not state.authenticated:
-            _send_json(sock, {"type": "error", "message": "not authenticated, send {type: auth, token} first"})
+            conn.send_json({"type": "error", "message": "not authenticated, send {type: auth, token} first"})
             return
 
         if msg_type == "subscribe":
-            self._handle_subscribe(sock, state, conn, message)
+            self._handle_subscribe(conn, state, db_conn, message)
         elif msg_type == "unsubscribe":
             project_id = message.get("project_id")
-            if isinstance(project_id, int):
-                self.broadcaster.unsubscribe(project_id, sock)
-            _send_json(sock, {"type": "unsubscribed", "project_id": project_id})
+            if isinstance(project_id, int) and not isinstance(project_id, bool):
+                self.broadcaster.unsubscribe(project_id, conn)
+            conn.send_json({"type": "unsubscribed", "project_id": project_id})
         else:
-            _send_json(sock, {"type": "error", "message": f"unknown message type: {msg_type!r}"})
+            conn.send_json({"type": "error", "message": f"unknown message type: {msg_type!r}"})
 
-    def _handle_auth(self, sock, state: ConnectionState, message: dict) -> None:
+    def _handle_auth(self, conn: ClientConnection, state: ConnectionState, message: dict) -> None:
         token = message.get("token")
         if not token:
-            _send_json(sock, {"type": "error", "message": "missing token"})
+            conn.send_json({"type": "error", "message": "missing token"})
             return
         try:
             claims = auth.decode_token(self.jwt_secret, token)
         except auth.AuthError as exc:
-            _send_json(sock, {"type": "error", "message": str(exc)})
+            conn.send_json({"type": "error", "message": str(exc)})
             return
         state.authenticated = True
         state.user_id = claims["sub"]
         state.workspace_id = claims["workspace_id"]
         state.role = claims["role"]
-        _send_json(sock, {"type": "auth_ok", "workspace_id": state.workspace_id, "role": state.role})
+        conn.send_json({"type": "auth_ok", "workspace_id": state.workspace_id, "role": state.role})
 
-    def _handle_subscribe(self, sock, state: ConnectionState, conn, message: dict) -> None:
+    def _handle_subscribe(self, conn: ClientConnection, state: ConnectionState, db_conn, message: dict) -> None:
         project_id = message.get("project_id")
-        if not isinstance(project_id, int):
-            _send_json(sock, {"type": "error", "message": "project_id must be an int"})
+        if not isinstance(project_id, int) or isinstance(project_id, bool):
+            conn.send_json({"type": "error", "message": "project_id must be an int"})
             return
-        project = db.get_project(conn, project_id)
+        project = db.get_project(db_conn, project_id)
         if project is None or project["workspace_id"] != state.workspace_id:
             # Deliberately the same error for "doesn't exist" and "wrong
             # workspace" so a client can't use this to enumerate other
             # workspaces' project ids.
-            _send_json(sock, {"type": "error", "message": "project not found"})
+            conn.send_json({"type": "error", "message": "project not found"})
             return
-        self.broadcaster.subscribe(project_id, sock)
-        _send_json(sock, {"type": "subscribed", "project_id": project_id})
+        self.broadcaster.subscribe(project_id, conn)
+        conn.send_json({"type": "subscribed", "project_id": project_id})

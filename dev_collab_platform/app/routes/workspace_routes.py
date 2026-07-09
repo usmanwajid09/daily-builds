@@ -1,6 +1,6 @@
 from flask import Blueprint, current_app, g, jsonify, request
 
-from .. import auth, db
+from .. import db
 from ..decorators import require_auth, require_role
 
 bp = Blueprint("workspace_routes", __name__, url_prefix="/api/workspace")

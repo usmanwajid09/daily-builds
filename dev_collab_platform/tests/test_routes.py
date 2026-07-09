@@ -240,3 +240,15 @@ def test_task_create_broadcasts_to_subscribers(client):
     assert len(received) == 1
     assert received[0][0] == pid
     assert received[0][1]["type"] == "task_created"
+
+
+def test_update_task_rejects_boolean_position(client):
+    """bool is a subclass of int in Python -- isinstance(True, int) is
+    True -- so a naive `isinstance(x, int)` check would silently accept
+    {"position": true} and store position=1. Regression test for that."""
+    token = signup(client).get_json()["token"]
+    pid = client.post("/api/projects", headers=auth_headers(token), json={"name": "P"}).get_json()["id"]
+    tid = client.post(f"/api/projects/{pid}/tasks", headers=auth_headers(token),
+                       json={"title": "X"}).get_json()["id"]
+    resp = client.patch(f"/api/tasks/{tid}", headers=auth_headers(token), json={"position": True})
+    assert resp.status_code == 400

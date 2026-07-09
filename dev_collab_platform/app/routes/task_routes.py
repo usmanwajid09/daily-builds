@@ -84,9 +84,10 @@ def update_task(task_id):
         if "position" not in body:
             fields["position"] = db.next_position(conn, task["project_id"], body["status"])
     if "position" in body:
-        if not isinstance(body["position"], int):
+        position = body["position"]
+        if not isinstance(position, int) or isinstance(position, bool):
             return jsonify(error="position must be an int"), 400
-        fields["position"] = body["position"]
+        fields["position"] = position
 
     if not fields:
         return jsonify(error="no updatable fields provided"), 400
