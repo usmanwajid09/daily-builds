@@ -8,3 +8,5 @@ node_modules/
 *.sqlite3
 .env
 trained_model.json
+*.db-wal
+*.db-shm
