@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<!--
+  Minimal, dependency-free demo of the real-time task board.
+  Open this file directly in a browser (no build step) after starting
+  `python run.py`, sign up/log in via the form, then open the SAME page
+  in a second tab/window and watch task changes appear live in both --
+  the browser's native WebSocket API talks straight to the hand-rolled
+  RFC 6455 server in app/ws/server.py, no client library involved.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>dev-collab-platform demo</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+  .row { display: flex; gap: .5rem; margin-bottom: .5rem; flex-wrap: wrap; }
+  input { padding: .4rem; }
+  button { padding: .4rem .8rem; cursor: pointer; }
+  .board { display: flex; gap: 1rem; margin-top: 1.5rem; }
+  .col { flex: 1; background: #f4f4f4; border-radius: 8px; padding: .75rem; min-height: 200px; }
+  .col h3 { margin-top: 0; text-transform: capitalize; }
+  .task { background: white; border-radius: 6px; padding: .5rem; margin-bottom: .5rem; box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+  .task button { font-size: .75rem; padding: .15rem .4rem; margin-left: .25rem; }
+  #status { font-size: .85rem; color: #555; }
+</style>
+</head>
+<body>
+<h1>dev-collab-platform</h1>
+<div id="status">not connected</div>
+
+<h2>1. Sign up or log in</h2>
+<div class="row">
+  <input id="email" placeholder="email" value="demo@example.com">
+  <input id="password" type="password" placeholder="password" value="password123">
+  <input id="workspace" placeholder="workspace name (signup only)" value="Demo Co">
+  <button onclick="signup()">Sign up</button>
+  <button onclick="login()">Log in</button>
+</div>
+
+<h2>2. Project</h2>
+<div class="row">
+  <input id="projectName" placeholder="new project name" value="Launch Plan">
+  <button onclick="createProject()">Create project</button>
+  <input id="projectId" placeholder="project id to open">
+  <button onclick="openProject()">Open board</button>
+</div>
+
+<h2>3. Board</h2>
+<div class="row">
+  <input id="taskTitle" placeholder="new task title">
+  <button onclick="createTask()">Add task</button>
+</div>
+<div class="board">
+  <div class="col"><h3>todo</h3><div id="col-todo"></div></div>
+  <div class="col"><h3>in_progress</h3><div id="col-in_progress"></div></div>
+  <div class="col"><h3>done</h3><div id="col-done"></div></div>
+</div>
+
+<script>
+const API = "http://127.0.0.1:5000";
+const WS = "ws://127.0.0.1:8765";
+let token = null, workspaceId = null, currentProjectId = null, ws = null;
+
+function setStatus(msg) { document.getElementById("status").textContent = msg; }
+
+async function api(path, method, body) {
+  const resp = await fetch(API + path, {
+    method,
+    headers: { "Content-Type": "application/json", ...(token ? { "Authorization": "Bearer " + token } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || resp.statusText);
+  return data;
+}
+
+async function signup() {
+  const data = await api("/api/auth/signup", "POST", {
+    email: document.getElementById("email").value,
+    password: document.getElementById("password").value,
+    workspace_name: document.getElementById("workspace").value,
+  });
+  token = data.token; workspaceId = data.workspace_id;
+  setStatus("signed up, workspace " + data.workspace_slug);
+}
+
+async function login() {
+  const data = await api("/api/auth/login", "POST", {
+    email: document.getElementById("email").value,
+    password: document.getElementById("password").value,
+  });
+  token = data.token; workspaceId = data.workspace_id;
+  setStatus("logged in, workspace " + data.workspace_slug);
+}
+
+async function createProject() {
+  const data = await api("/api/projects", "POST", { name: document.getElementById("projectName").value });
+  document.getElementById("projectId").value = data.id;
+  setStatus("created project #" + data.id);
+}
+
+function renderBoard(board) {
+  for (const status of ["todo", "in_progress", "done"]) {
+    const col = document.getElementById("col-" + status);
+    col.innerHTML = "";
+    (board[status] || []).forEach(t => col.appendChild(renderTask(t)));
+  }
+}
+
+function renderTask(t) {
+  const div = document.createElement("div");
+  div.className = "task";
+  div.id = "task-" + t.id;
+  div.innerHTML = `<strong>${t.title}</strong><br>`;
+  const statuses = ["todo", "in_progress", "done"];
+  statuses.filter(s => s !== t.status).forEach(s => {
+    const btn = document.createElement("button");
+    btn.textContent = "-> " + s;
+    btn.onclick = () => api(`/api/tasks/${t.id}`, "PATCH", { status: s });
+    div.appendChild(btn);
+  });
+  const del = document.createElement("button");
+  del.textContent = "delete";
+  del.onclick = () => api(`/api/tasks/${t.id}`, "DELETE");
+  div.appendChild(del);
+  return div;
+}
+
+async function openProject() {
+  currentProjectId = parseInt(document.getElementById("projectId").value, 10);
+  const data = await api(`/api/projects/${currentProjectId}/tasks`, "GET");
+  renderBoard(data.board);
+  connectWs();
+}
+
+function connectWs() {
+  if (ws) ws.close();
+  ws = new WebSocket(WS);
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: "auth", token }));
+  };
+  ws.onmessage = (evt) => {
+    const msg = JSON.parse(evt.data);
+    if (msg.type === "auth_ok") {
+      ws.send(JSON.stringify({ type: "subscribe", project_id: currentProjectId }));
+    } else if (msg.type === "subscribed") {
+      setStatus("live on project #" + msg.project_id);
+    } else if (msg.type === "task_created" || msg.type === "task_updated") {
+      refreshBoard();
+    } else if (msg.type === "task_deleted") {
+      refreshBoard();
+    } else if (msg.type === "error") {
+      setStatus("ws error: " + msg.message);
+    }
+  };
+  ws.onclose = () => setStatus("ws disconnected");
+}
+
+async function refreshBoard() {
+  const data = await api(`/api/projects/${currentProjectId}/tasks`, "GET");
+  renderBoard(data.board);
+}
+
+async function createTask() {
+  const title = document.getElementById("taskTitle").value;
+  if (!title || !currentProjectId) return;
+  await api(`/api/projects/${currentProjectId}/tasks`, "POST", { title });
+  document.getElementById("taskTitle").value = "";
+  refreshBoard();
+}
+</script>
+</body>
+</html>
