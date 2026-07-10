@@ -56,7 +56,12 @@ def issue_token(secret: str, user_id: int, workspace_id: int, role: str,
                  algorithm: str = DEFAULT_JWT_ALGORITHM) -> str:
     now = datetime.now(timezone.utc)
     payload = {
-        "sub": user_id,
+        # RFC 7519 says "sub" (subject) should be a StringOrURI. Newer PyJWT
+        # versions enforce this on decode (raises InvalidSubjectError if
+        # it's not a str) -- must encode it as a string here, not the raw
+        # int, or every decode fails with a generic "invalid token" on any
+        # PyJWT release that added this check.
+        "sub": str(user_id),
         "workspace_id": workspace_id,
         "role": role,
         "iat": now,
