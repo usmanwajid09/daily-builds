@@ -45,9 +45,28 @@ def test_slugify(name, expected):
 def test_issue_and_decode_token_roundtrip():
     token = auth.issue_token("secret", user_id=7, workspace_id=3, role="admin")
     claims = auth.decode_token("secret", token)
-    assert claims["sub"] == 7
+    assert claims["sub"] == "7"  # RFC 7519: "sub" is a StringOrURI on the wire
     assert claims["workspace_id"] == 3
     assert claims["role"] == "admin"
+
+
+def test_issue_token_encodes_sub_as_a_string_not_an_int():
+    """Regression test: RFC 7519 says "sub" should be a StringOrURI.
+    Older PyJWT (e.g. 2.3.x) never checked this on decode, so encoding
+    "sub" as a raw int worked there but broke on newer PyJWT releases
+    that validate it and raise InvalidSubjectError("Subject must be a
+    string") -- surfaced through our code as a generic, misleading
+    "invalid token" 401 on every single authenticated request. Assert
+    the wire format directly (not just that decode succeeds) so this
+    can't silently regress back to an int."""
+    token = auth.issue_token("secret", user_id=42, workspace_id=1, role="owner")
+    header, payload_b64, _sig = token.split(".")
+    import base64
+    import json
+    padded = payload_b64 + "=" * (-len(payload_b64) % 4)
+    payload = json.loads(base64.urlsafe_b64decode(padded))
+    assert payload["sub"] == "42"
+    assert isinstance(payload["sub"], str)
 
 
 def test_decode_token_wrong_secret_fails():

@@ -18,7 +18,7 @@ def require_auth(fn):
             claims = auth.decode_token(current_app.config["JWT_SECRET"], token)
         except auth.AuthError as exc:
             return jsonify(error=str(exc)), 401
-        g.user_id = claims["sub"]
+        g.user_id = int(claims["sub"])  # "sub" is a string on the wire (RFC 7519)
         g.workspace_id = claims["workspace_id"]
         g.role = claims["role"]
         return fn(*args, **kwargs)

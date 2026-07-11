@@ -272,7 +272,7 @@ class WebSocketServer:
             conn.send_json({"type": "error", "message": str(exc)})
             return
         state.authenticated = True
-        state.user_id = claims["sub"]
+        state.user_id = int(claims["sub"])  # "sub" is a string on the wire (RFC 7519)
         state.workspace_id = claims["workspace_id"]
         state.role = claims["role"]
         conn.send_json({"type": "auth_ok", "workspace_id": state.workspace_id, "role": state.role})
