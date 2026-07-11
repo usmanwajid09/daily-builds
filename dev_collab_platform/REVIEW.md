@@ -84,3 +84,72 @@ fixed:
   reassembly** are deliberate scope decisions for a demo-scale app, not
   bugs -- both called out explicitly in the README's "Known
   limitations" section rather than left implicit.
+
+## Milestone 2 (2026-07-11)
+
+Full diff read against `main` before writing this. Ran the full test
+suite (132 tests, up from 82), a `pyflakes` pass, and a real end-to-end
+smoke test against a running `run.py` process with `curl` -- signup,
+invite, comment with a mention, fetch the mentioned user's
+notifications, PATCH a role, then DELETE the project and confirm the
+cascade didn't raise a foreign-key error.
+
+### Real bug found and fixed
+
+**`PATCH /api/workspace/members/<id>` sent a notification even when
+the role didn't actually change.** Re-submitting the same role (a
+client retry, or a UI re-confirming the current value) unconditionally
+created a `role_changed` notification reading "your role was changed
+to admin" for a user whose role was already `admin` -- true but
+misleading, since nothing changed. Fixed by short-circuiting to a
+plain 200 with no DB write and no notification when `new_role ==
+membership["role"]`. Added
+`test_setting_the_same_role_is_a_noop_and_does_not_notify` as a
+regression test (it initially failed against the pre-fix code, showing
+`unread_count == 1` instead of the expected `0`, confirming the test
+actually exercises the bug rather than passing vacuously).
+
+### Reviewed and judged not a bug
+
+- **Mention matching is case-insensitive by construction, not by
+  accident** -- `extract_mentioned_emails` lower-cases every match, and
+  `auth_routes.signup`/`login` already lower-case stored emails, so
+  `@Alice@Example.COM` correctly resolves to a member stored as
+  `alice@example.com`. Added
+  `test_mention_matching_is_case_insensitive` as an explicit end-to-end
+  regression test rather than relying on `test_mentions.py`'s unit
+  tests (which only prove the *extraction* is case-folded, not that
+  the full mention -> notification pipeline actually matches a real
+  member) to keep this from silently regressing if either side's
+  case-handling ever changes independently.
+- **A user's notification WebSocket channel is keyed by `user_id`
+  alone, not `(user_id, workspace_id)`.** So a person who's a member of
+  two workspaces gets both workspaces' notifications on one connection
+  regardless of which workspace-scoped token authenticated it. This
+  was a deliberate design call, not an oversight -- confirmed correct
+  by `test_notification_channel_is_per_user_not_broadcast_to_everyone`
+  (isolation between *different* users) plus manual reasoning about
+  what a real notification bell should do for one person across
+  multiple orgs -- and called out explicitly in the README so it reads
+  as intentional rather than something to "fix" later.
+- **Last-owner protection (`count_owners() <= 1`) is check-then-act,
+  not wrapped in a single atomic statement.** Same category of issue
+  as `next_position`'s read-then-insert race flagged in Milestone 1's
+  section above: a real race in general, but `run.py` runs the REST
+  API single-threaded, so it can't actually be hit by the code as
+  shipped. Documented, not fixed, in the README's limitations section.
+- **Schema migration gap for an existing `dev_collab.db`.** `CREATE
+  TABLE IF NOT EXISTS` means Milestone 2's new tables (`comments`,
+  `notifications`) get created fine against a Milestone-1 leftover db
+  file, but `tasks.project_id`'s new `ON DELETE CASCADE` doesn't
+  retroactively apply to that table since SQLite can't add/modify a
+  foreign key via `ALTER TABLE`. Deleting a project against a
+  carried-over old db file would fail on existing tasks instead of
+  cascading. Not fixed with a migration system (there's no real
+  persisted data at this stage to migrate) -- documented in the README
+  telling anyone running this locally to start from a fresh `DB_PATH`.
+
+### Lint pass
+
+`pyflakes app/ run.py tests/` was clean on the first pass this time --
+no unused imports or variables to fix, unlike Milestone 1.
