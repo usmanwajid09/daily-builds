@@ -283,3 +283,116 @@ def test_subscribe_rejects_boolean_project_id(env):
         assert reply == {"type": "error", "message": "project_id must be an int"}
     finally:
         ws.close()
+
+
+def test_comment_created_and_deleted_broadcast_to_project_subscribers(env):
+    rest_client, ws_server = env
+    account = signup(rest_client)
+    project = rest_client.post("/api/projects", headers=auth_headers(account["token"]),
+                                json={"name": "P"}).get_json()
+    task = rest_client.post(f"/api/projects/{project['id']}/tasks",
+                             headers=auth_headers(account["token"]), json={"title": "X"}).get_json()
+
+    ws = WSClient("127.0.0.1", ws_server.port)
+    try:
+        ws.send_json({"type": "auth", "token": account["token"]})
+        ws.recv_json()
+        ws.send_json({"type": "subscribe", "project_id": project["id"]})
+        ws.recv_json()
+        ws.settimeout(3)
+
+        resp = rest_client.post(f"/api/tasks/{task['id']}/comments",
+                                 headers=auth_headers(account["token"]), json={"body": "hello"})
+        comment_id = resp.get_json()["id"]
+
+        created_event = ws.recv_json()
+        assert created_event["type"] == "comment_created"
+        assert created_event["task_id"] == task["id"]
+        assert created_event["comment"]["body"] == "hello"
+
+        rest_client.delete(f"/api/comments/{comment_id}", headers=auth_headers(account["token"]))
+        deleted_event = ws.recv_json()
+        assert deleted_event == {
+            "type": "comment_deleted", "project_id": project["id"],
+            "task_id": task["id"], "comment_id": comment_id,
+        }
+    finally:
+        ws.close()
+
+
+def test_mention_notification_pushed_live_to_subscribed_user(env):
+    rest_client, ws_server = env
+    owner = signup(rest_client, email="owner@example.com", workspace="Acme")
+    rest_client.post("/api/auth/signup", json={
+        "email": "member@example.com", "password": "password123", "workspace_name": "Member Co",
+    })
+    rest_client.post("/api/workspace/invite", headers=auth_headers(owner["token"]),
+                      json={"email": "member@example.com", "role": "member"})
+    member = rest_client.post("/api/auth/login", json={
+        "email": "member@example.com", "password": "password123", "workspace_slug": "acme",
+    }).get_json()
+
+    project = rest_client.post("/api/projects", headers=auth_headers(owner["token"]),
+                                json={"name": "P"}).get_json()
+    task = rest_client.post(f"/api/projects/{project['id']}/tasks",
+                             headers=auth_headers(owner["token"]), json={"title": "X"}).get_json()
+
+    member_ws = WSClient("127.0.0.1", ws_server.port)
+    try:
+        member_ws.send_json({"type": "auth", "token": member["token"]})
+        member_ws.recv_json()
+        member_ws.send_json({"type": "subscribe_notifications"})
+        sub_reply = member_ws.recv_json()
+        assert sub_reply == {"type": "subscribed_notifications"}
+        member_ws.settimeout(3)
+
+        rest_client.post(f"/api/tasks/{task['id']}/comments", headers=auth_headers(owner["token"]),
+                          json={"body": "cc @member@example.com"})
+
+        event = member_ws.recv_json()
+        assert event["type"] == "notification"
+        assert event["notification"]["type"] == "mention"
+        assert "owner@example.com" in event["notification"]["message"]
+    finally:
+        member_ws.close()
+
+
+def test_notification_channel_is_per_user_not_broadcast_to_everyone(env):
+    """A notification for user B must not leak to user A's notification
+    subscription, even though both are connected at the same time."""
+    rest_client, ws_server = env
+    owner = signup(rest_client, email="owner@example.com", workspace="Acme")
+    rest_client.post("/api/auth/signup", json={
+        "email": "bystander@example.com", "password": "password123", "workspace_name": "Bystander Co",
+    })
+    rest_client.post("/api/workspace/invite", headers=auth_headers(owner["token"]),
+                      json={"email": "bystander@example.com", "role": "member"})
+    bystander = rest_client.post("/api/auth/login", json={
+        "email": "bystander@example.com", "password": "password123", "workspace_slug": "acme",
+    }).get_json()
+    rest_client.post("/api/auth/signup", json={
+        "email": "member@example.com", "password": "password123", "workspace_name": "Member Co",
+    })
+    rest_client.post("/api/workspace/invite", headers=auth_headers(owner["token"]),
+                      json={"email": "member@example.com", "role": "member"})
+
+    project = rest_client.post("/api/projects", headers=auth_headers(owner["token"]),
+                                json={"name": "P"}).get_json()
+    task = rest_client.post(f"/api/projects/{project['id']}/tasks",
+                             headers=auth_headers(owner["token"]), json={"title": "X"}).get_json()
+
+    bystander_ws = WSClient("127.0.0.1", ws_server.port)
+    try:
+        bystander_ws.send_json({"type": "auth", "token": bystander["token"]})
+        bystander_ws.recv_json()
+        bystander_ws.send_json({"type": "subscribe_notifications"})
+        bystander_ws.recv_json()
+
+        rest_client.post(f"/api/tasks/{task['id']}/comments", headers=auth_headers(owner["token"]),
+                          json={"body": "cc @member@example.com"})  # mentions member, NOT bystander
+
+        bystander_ws.settimeout(1)
+        with pytest.raises(socket.timeout):
+            bystander_ws.recv_json()
+    finally:
+        bystander_ws.close()
