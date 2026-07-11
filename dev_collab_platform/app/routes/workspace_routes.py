@@ -82,10 +82,19 @@ def update_member_role(user_id):
     if membership["role"] == "owner" and new_role != "owner" and db.count_owners(conn, g.workspace_id) <= 1:
         return jsonify(error="cannot demote the last owner"), 409
 
+    user = db.get_user(conn, user_id)
+
+    # A PATCH that sets the role to what it already is is a no-op: skip
+    # the write and, more importantly, skip the notification -- without
+    # this check, re-submitting the same role (e.g. a client retry, or
+    # re-confirming in a UI) would spam the target with a misleading
+    # "your role was changed" notification for a role that never changed.
+    if new_role == membership["role"]:
+        return jsonify(user_id=user_id, email=user["email"], role=new_role)
+
     with db.transaction(conn):
         db.update_membership_role(conn, user_id, g.workspace_id, new_role)
 
-    user = db.get_user(conn, user_id)
     message = f"your role was changed to {new_role}"
     with db.transaction(conn):
         notif_id = db.create_notification(

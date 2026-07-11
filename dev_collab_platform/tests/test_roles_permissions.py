@@ -107,6 +107,23 @@ def test_update_role_rejects_invalid_role_value(client):
     assert resp.status_code == 400
 
 
+def test_setting_the_same_role_is_a_noop_and_does_not_notify(client):
+    """Regression test: PATCHing a member to the role they already have
+    must not send a spurious 'your role was changed' notification."""
+    owner_token = signup(client).get_json()["token"]
+    signup(client, email="member@example.com", workspace="Member Co")
+    member_token = invite_and_login(client, owner_token, "member@example.com", "member")
+    member_id = client.get("/api/workspace", headers=auth_headers(member_token)).get_json()["members"][1]["id"]
+
+    resp = client.patch(f"/api/workspace/members/{member_id}", headers=auth_headers(owner_token),
+                         json={"role": "member"})
+    assert resp.status_code == 200
+    assert resp.get_json()["role"] == "member"
+
+    resp = client.get("/api/notifications", headers=auth_headers(member_token))
+    assert resp.get_json()["unread_count"] == 0
+
+
 def test_role_change_creates_a_notification_for_the_target(client):
     owner_token = signup(client).get_json()["token"]
     signup(client, email="member@example.com", workspace="Member Co")
