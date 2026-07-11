@@ -35,6 +35,9 @@ def test_lesson_order_index_auto_increments(client):
 
 
 def test_create_lesson_rejects_duplicate_order_index(client):
+    """Regression test: this used to leak a raw 500 (unhandled
+    sqlite3.IntegrityError) instead of a clean 409 -- caught in
+    self-review, see REVIEW.md."""
     token, course = _instructor_with_course(client)
     client.post(f"/api/courses/{course['id']}/lessons",
                 json={"title": "L1", "content_type": "text", "content": "a", "order_index": 5},
@@ -42,7 +45,22 @@ def test_create_lesson_rejects_duplicate_order_index(client):
     r = client.post(f"/api/courses/{course['id']}/lessons",
                      json={"title": "L2", "content_type": "text", "content": "b", "order_index": 5},
                      headers=auth_header(token))
-    assert r.status_code == 500 or r.status_code >= 400  # sqlite IntegrityError surfaces as a server error
+    assert r.status_code == 409
+    assert "order_index" in r.get_json()["error"]
+
+
+def test_update_lesson_rejects_duplicate_order_index(client):
+    """Same regression, via the update path (a second, independent call
+    site that hits the same UNIQUE constraint)."""
+    token, course = _instructor_with_course(client)
+    client.post(f"/api/courses/{course['id']}/lessons",
+                json={"title": "L1", "content_type": "text", "content": "a", "order_index": 1},
+                headers=auth_header(token))
+    l2 = client.post(f"/api/courses/{course['id']}/lessons",
+                      json={"title": "L2", "content_type": "text", "content": "b", "order_index": 2},
+                      headers=auth_header(token)).get_json()
+    r = client.patch(f"/api/lessons/{l2['id']}", json={"order_index": 1}, headers=auth_header(token))
+    assert r.status_code == 409
 
 
 def test_create_lesson_requires_content_for_text(client):

@@ -9,6 +9,7 @@ arbitrary content, since that would let a client claim an unuploaded
 path exists).
 """
 import os
+import sqlite3
 import uuid
 
 from flask import Blueprint, current_app, g, jsonify, request
@@ -82,10 +83,15 @@ def create_lesson(course_id):
         return jsonify(error="content (the URL) is required for a video_url lesson"), 400
 
     order_index = body.get("order_index")
-    with db.transaction(conn):
-        if order_index is None:
-            order_index = db.next_lesson_order_index(conn, course_id)
-        lesson_id = db.create_lesson(conn, course_id, title, content_type, content, order_index)
+    try:
+        with db.transaction(conn):
+            if order_index is None:
+                order_index = db.next_lesson_order_index(conn, course_id)
+            lesson_id = db.create_lesson(conn, course_id, title, content_type, content, order_index)
+    except sqlite3.IntegrityError:
+        return jsonify(
+            error=f"a lesson with order_index {order_index} already exists in this course"
+        ), 409
     return jsonify(db.row_to_dict(db.get_lesson(conn, lesson_id))), 201
 
 
@@ -121,8 +127,13 @@ def update_lesson(lesson_id):
         fields["order_index"] = body["order_index"]
 
     if fields:
-        with db.transaction(conn):
-            db.update_lesson(conn, lesson_id, **fields)
+        try:
+            with db.transaction(conn):
+                db.update_lesson(conn, lesson_id, **fields)
+        except sqlite3.IntegrityError:
+            return jsonify(
+                error=f"a lesson with order_index {fields.get('order_index')} already exists in this course"
+            ), 409
     return jsonify(db.row_to_dict(db.get_lesson(conn, lesson_id)))
 
 

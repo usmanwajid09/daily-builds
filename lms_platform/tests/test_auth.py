@@ -26,6 +26,44 @@ def test_signup_rejects_duplicate_email(client):
     assert r.status_code == 409
 
 
+def test_signup_race_on_duplicate_email_returns_409_not_500(client, app):
+    """Regression test for the same check-then-insert race saas_starter's
+    signup/invite hit (fixed in PR #7): the pre-existence check and the
+    insert aren't atomic. Simulates a concurrent request winning the race
+    by making the existence check report "no duplicate" via a monkeypatch
+    while a real conflicting row already exists in the DB -- so the only
+    thing that can catch the conflict is the INSERT itself hitting the
+    `users.email` UNIQUE constraint. Confirms the route relies on that
+    constraint (a clean 409) instead of crashing with an unhandled
+    IntegrityError."""
+    from lms_platform import auth, db as db_module
+
+    conn = app.config["DB_CONN"]
+    email = "race@example.com"
+
+    # The "concurrent" request that already committed its insert.
+    with db_module.transaction(conn):
+        db_module.create_user(conn, email, auth.hash_password("password123"), "student")
+
+    real_get_user_by_email = db_module.get_user_by_email
+
+    def lying_get_user_by_email(conn_, email_):
+        # Pretend the row this request is about to race against isn't
+        # there yet -- exactly what the real check would see if it ran
+        # a moment before the concurrent request's commit.
+        return None
+
+    db_module.get_user_by_email = lying_get_user_by_email
+    try:
+        r = client.post("/api/signup", json={"email": email, "password": "password123", "role": "student"})
+    finally:
+        db_module.get_user_by_email = real_get_user_by_email
+
+    assert r.status_code == 409
+    assert conn.execute("SELECT COUNT(*) AS n FROM users WHERE email = ?", (email,)).fetchone()["n"] == 1
+
+
+
 def test_signup_rejects_missing_email(client):
     r = client.post("/api/signup", json={"password": "password123", "role": "student"})
     assert r.status_code == 400

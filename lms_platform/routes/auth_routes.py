@@ -1,3 +1,5 @@
+import sqlite3
+
 from flask import Blueprint, current_app, jsonify, request
 
 from .. import auth, db
@@ -27,8 +29,16 @@ def signup():
     if db.get_user_by_email(conn, email) is not None:
         return jsonify(error="an account with that email already exists"), 409
 
-    with db.transaction(conn):
-        user_id = db.create_user(conn, email, password_hash, role)
+    # The check above is check-then-insert, not atomic: two concurrent
+    # signups for the same email can both pass it. Rely on the `users.email`
+    # UNIQUE constraint as the real guard and turn the resulting
+    # IntegrityError into a clean 409 instead of a raw 500 -- the same race
+    # saas_starter's signup/invite hit and fixed the same way (PR #7).
+    try:
+        with db.transaction(conn):
+            user_id = db.create_user(conn, email, password_hash, role)
+    except sqlite3.IntegrityError:
+        return jsonify(error="an account with that email already exists"), 409
 
     token = auth.issue_token(current_app.config["JWT_SECRET"], user_id, email, role)
     return jsonify(token=token, user={"id": user_id, "email": email, "role": role}), 201
