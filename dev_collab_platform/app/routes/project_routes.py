@@ -1,7 +1,7 @@
 from flask import Blueprint, current_app, g, jsonify, request
 
 from .. import db
-from ..decorators import require_auth
+from ..decorators import require_auth, require_role
 
 bp = Blueprint("project_routes", __name__, url_prefix="/api/projects")
 
@@ -37,3 +37,22 @@ def get_project(project_id):
     if project is None or project["workspace_id"] != g.workspace_id:
         return jsonify(error="project not found"), 404
     return jsonify(db.row_to_dict(project))
+
+
+@bp.delete("/<int:project_id>")
+@require_auth
+@require_role("owner", "admin")
+def delete_project(project_id):
+    """Owner/admin only. Cascades to the project's tasks, their
+    comments, and any notifications referencing them (see db.py's
+    ON DELETE CASCADE foreign keys) -- one DELETE, no manual cleanup."""
+    conn = current_app.config["DB_CONN"]
+    project = db.get_project(conn, project_id)
+    if project is None or project["workspace_id"] != g.workspace_id:
+        return jsonify(error="project not found"), 404
+
+    with db.transaction(conn):
+        db.delete_project(conn, project_id)
+
+    current_app.config["BROADCASTER"].broadcast(project_id, {"type": "project_deleted", "project_id": project_id})
+    return jsonify(deleted=True, project_id=project_id)

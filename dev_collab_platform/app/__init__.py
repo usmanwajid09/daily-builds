@@ -23,11 +23,16 @@ def create_app(db_path: str = ":memory:", jwt_secret: str = "dev-secret-change-m
     app.config["JWT_SECRET"] = jwt_secret
     app.config["BROADCASTER"] = broadcaster if broadcaster is not None else Broadcaster()
 
-    from .routes import auth_routes, workspace_routes, project_routes, task_routes
+    from .routes import (
+        auth_routes, workspace_routes, project_routes, task_routes,
+        comment_routes, notification_routes,
+    )
     app.register_blueprint(auth_routes.bp)
     app.register_blueprint(workspace_routes.bp)
     app.register_blueprint(project_routes.bp)
     app.register_blueprint(task_routes.bp)
+    app.register_blueprint(comment_routes.bp)
+    app.register_blueprint(notification_routes.bp)
 
     @app.get("/api/health")
     def health():

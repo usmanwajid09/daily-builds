@@ -13,6 +13,10 @@ in `protocol.py`):
         against the DB), so a token for workspace A can never subscribe
         to workspace B's project traffic.
     {"type": "unsubscribe", "project_id": <int>}
+    {"type": "subscribe_notifications"}
+        Joins this connection's own per-user notification channel --
+        no project_id needed, it's keyed off the authenticated user_id.
+    {"type": "unsubscribe_notifications"}
 
   server -> client:
     {"type": "auth_ok", "workspace_id": <int>, "role": "<role>"}
@@ -20,12 +24,23 @@ in `protocol.py`):
     {"type": "task_created", "project_id": <int>, "task": {...}}
     {"type": "task_updated", "project_id": <int>, "task": {...}}
     {"type": "task_deleted", "project_id": <int>, "task_id": <int>}
+    {"type": "comment_created", "project_id": <int>, "task_id": <int>, "comment": {...}}
+    {"type": "comment_deleted", "project_id": <int>, "task_id": <int>, "comment_id": <int>}
+    {"type": "project_deleted", "project_id": <int>}
+    {"type": "subscribed_notifications"}
+    {"type": "notification", "notification": {...}}
+        Pushed when a mention or role change creates a notification for
+        this connection's user, if they're subscribed to their channel.
     {"type": "error", "message": "<str>"}
 
-The REST API (app/routes/task_routes.py) calls `Broadcaster.broadcast`
-directly after committing each task mutation, so REST writers and
-WebSocket subscribers share one process-wide in-memory registry -- no
-separate message queue needed for a single-process deployment.
+The REST API calls `Broadcaster.broadcast` directly after committing
+each mutation, so REST writers and WebSocket subscribers share one
+process-wide in-memory registry -- no separate message queue needed for
+a single-process deployment. Broadcaster channels are keyed generically
+(see its docstring): task-board events use an int project_id, personal
+notifications use a string key f"user:{user_id}" -- same class, same
+subscribe/broadcast/unsubscribe_all machinery, no second broadcaster
+needed since Python dicts don't care about key type.
 """
 import json
 import logging
@@ -76,41 +91,48 @@ class ClientConnection:
 
 
 class Broadcaster:
-    """Thread-safe registry of project_id -> set of subscribed connections."""
+    """Thread-safe registry of channel key -> set of subscribed connections.
+
+    A channel key is any hashable value -- an int project_id for
+    task-board/comment events, or a string f"user:{user_id}" for a
+    person's own notification channel. Nothing here cares which; it's
+    just a dict, so one registry and one set of methods serves both use
+    cases instead of a second Broadcaster-like class for notifications.
+    """
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._channels = {}  # project_id -> set[ClientConnection]
+        self._channels = {}  # channel key -> set[ClientConnection]
 
-    def subscribe(self, project_id: int, conn: ClientConnection) -> None:
+    def subscribe(self, channel, conn: ClientConnection) -> None:
         with self._lock:
-            self._channels.setdefault(project_id, set()).add(conn)
+            self._channels.setdefault(channel, set()).add(conn)
 
-    def unsubscribe(self, project_id: int, conn: ClientConnection) -> None:
+    def unsubscribe(self, channel, conn: ClientConnection) -> None:
         with self._lock:
-            subs = self._channels.get(project_id)
+            subs = self._channels.get(channel)
             if subs is not None:
                 subs.discard(conn)
                 if not subs:
-                    del self._channels[project_id]
+                    del self._channels[channel]
 
     def unsubscribe_all(self, conn: ClientConnection) -> None:
         with self._lock:
-            for project_id in list(self._channels.keys()):
-                self._channels[project_id].discard(conn)
-                if not self._channels[project_id]:
-                    del self._channels[project_id]
+            for channel in list(self._channels.keys()):
+                self._channels[channel].discard(conn)
+                if not self._channels[channel]:
+                    del self._channels[channel]
 
-    def subscriber_count(self, project_id: int) -> int:
+    def subscriber_count(self, channel) -> int:
         with self._lock:
-            return len(self._channels.get(project_id, ()))
+            return len(self._channels.get(channel, ()))
 
-    def broadcast(self, project_id: int, message: dict, exclude: ClientConnection = None) -> int:
+    def broadcast(self, channel, message: dict, exclude: ClientConnection = None) -> int:
         """Send `message` (JSON) to every connection subscribed to
-        project_id. Returns how many it was actually sent to. Dead
+        `channel`. Returns how many it was actually sent to. Dead
         connections are dropped silently -- broadcast is best-effort."""
         with self._lock:
-            subs = list(self._channels.get(project_id, ()))
+            subs = list(self._channels.get(channel, ()))
         payload = protocol.encode_frame(json.dumps(message).encode("utf-8"))
         sent = 0
         for conn in subs:
@@ -120,7 +142,7 @@ class Broadcaster:
                 conn.send(payload)
                 sent += 1
             except OSError:
-                self.unsubscribe(project_id, conn)
+                self.unsubscribe(channel, conn)
         return sent
 
 
@@ -258,6 +280,12 @@ class WebSocketServer:
             if isinstance(project_id, int) and not isinstance(project_id, bool):
                 self.broadcaster.unsubscribe(project_id, conn)
             conn.send_json({"type": "unsubscribed", "project_id": project_id})
+        elif msg_type == "subscribe_notifications":
+            self.broadcaster.subscribe(f"user:{state.user_id}", conn)
+            conn.send_json({"type": "subscribed_notifications"})
+        elif msg_type == "unsubscribe_notifications":
+            self.broadcaster.unsubscribe(f"user:{state.user_id}", conn)
+            conn.send_json({"type": "unsubscribed_notifications"})
         else:
             conn.send_json({"type": "error", "message": f"unknown message type: {msg_type!r}"})
 
