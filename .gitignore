@@ -10,3 +10,5 @@ node_modules/
 trained_model.json
 *.db-wal
 *.db-shm
+lms_platform/data/uploads/*
+!lms_platform/data/uploads/.gitkeep
