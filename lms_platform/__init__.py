@@ -28,11 +28,24 @@ def create_app(db_path: str = ":memory:", jwt_secret: str = "dev-secret-change-m
     app.config["UPLOAD_DIR"] = upload_dir or DEFAULT_UPLOAD_DIR
     app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024  # 12 MB request-level cap
 
-    from .routes import auth_routes, course_routes, lesson_routes, enrollment_routes
+    from .routes import (
+        assignment_routes,
+        auth_routes,
+        certificate_routes,
+        course_routes,
+        dashboard_routes,
+        enrollment_routes,
+        lesson_routes,
+        quiz_routes,
+    )
     app.register_blueprint(auth_routes.bp)
     app.register_blueprint(course_routes.bp)
     app.register_blueprint(lesson_routes.bp)
     app.register_blueprint(enrollment_routes.bp)
+    app.register_blueprint(quiz_routes.bp)
+    app.register_blueprint(assignment_routes.bp)
+    app.register_blueprint(certificate_routes.bp)
+    app.register_blueprint(dashboard_routes.bp)
 
     @app.get("/api/health")
     def health():

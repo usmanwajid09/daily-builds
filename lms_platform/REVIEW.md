@@ -2,6 +2,70 @@
 
 Running log of self-review findings per milestone. Newest first.
 
+## Milestone 2 (2026-07-12, final)
+
+Full diff read against `main`, a manual end-to-end smoke test via the
+Flask test client covering the whole new surface in one flow (create
+course/lesson -> enroll -> complete lesson -> create quiz -> student
+view hides answers -> submit correct attempt -> passes -> create
+assignment -> submit -> instructor grades -> issue certificate ->
+public verification -> re-issue idempotent -> both dashboard shapes),
+the full pytest suite (133 tests: 91 from milestone 1 + 42 new), and a
+`pyflakes` pass across every new/changed file.
+
+**One real (if minor) issue found and fixed:**
+
+1. **`dashboard_routes.py`'s instructor view hand-rolled a raw SQL
+   query** (`conn.execute("SELECT student_id FROM enrollments WHERE
+   course_id = ?", ...)`) to count enrolled students, instead of going
+   through `db.py` like every other route in this app (and every
+   other arc in this repo) does. Not a correctness bug -- the query
+   itself was right, and it was covered by
+   `test_instructor_dashboard_counts_students_and_ungraded` either
+   way -- but it breaks the "all SQL lives in db.py, routes only call
+   named helpers" convention this codebase otherwise holds to
+   everywhere else, which matters here specifically because it's the
+   one place a future schema change (e.g. a `status` column on
+   `enrollments` for drop/withdraw) could silently miss this ad-hoc
+   query while updating every real helper. Fixed by adding
+   `db.list_enrollments_for_course()` (mirroring the existing
+   `list_enrollments_for_student()`) and calling that instead. No
+   behavior change -- the existing dashboard test continues to pass
+   unmodified, confirming the refactor didn't alter the count.
+
+**Design decisions documented, not bugs, worth recording here so a
+future milestone doesn't "fix" them by accident:**
+
+- **Certificates gate assignments on submission, not a passing
+  grade.** Assignment grading is manual and instructor-paced; making
+  a certificate wait on a grade that may not exist yet for days would
+  make a student's credential hostage to how quickly their instructor
+  grades, which felt like the wrong dependency. Quizzes, by contrast,
+  auto-grade instantly, so gating on *passing* a quiz (not just
+  attempting it) has no such lag problem. `certificates.py` documents
+  this asymmetry explicitly in its module docstring.
+- **A student can retake a quiz unlimited times**; the dashboard's
+  per-quiz pass rate and the certificate eligibility check both key
+  off each student's *best* attempt (`db.best_attempt_for_student`),
+  not their most recent or first. Verified with a dedicated test
+  (`test_instructor_dashboard_quiz_pass_rate_uses_best_attempt_per_student`)
+  that deliberately fails-then-passes and checks the pass rate reads
+  100%, not 50% or 0%.
+- **`GET /api/certificates/<code>` requires no authentication at
+  all** -- deliberate, mirroring how real credential-verification
+  pages work (an employer checking a candidate's certificate doesn't
+  have an account on the issuing platform). It returns a plain `404`
+  for both a malformed code and a syntactically-valid-but-unknown one,
+  so it can't be used to distinguish "wrong shape" from "right shape,
+  doesn't exist."
+- **Resubmitting an assignment overwrites the previous submission and
+  clears any existing grade/feedback** (`db.upsert_submission`)
+  rather than keeping a history of submissions or preserving a stale
+  grade against new content. Chosen because grading against content
+  that no longer exists would be actively misleading to the student;
+  a submission-history feature (if ever wanted) would be a genuinely
+  new capability, not a fix to this milestone's behavior.
+
 ## Milestone 1 (2026-07-11)
 
 Full diff read against `main`, a manual end-to-end smoke test via the
