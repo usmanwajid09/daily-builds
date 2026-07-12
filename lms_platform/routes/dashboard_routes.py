@@ -50,9 +50,7 @@ def _instructor_dashboard(conn, instructor_id: int) -> dict:
     courses_out = []
     total_ungraded = 0
     for course in courses:
-        enrollments = conn.execute(
-            "SELECT student_id FROM enrollments WHERE course_id = ?", (course["id"],)
-        ).fetchall()
+        enrollments = db.list_enrollments_for_course(conn, course["id"])
         student_count = len(enrollments)
 
         quizzes = db.list_quizzes_for_course(conn, course["id"])

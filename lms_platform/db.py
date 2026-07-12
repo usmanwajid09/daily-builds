@@ -296,6 +296,12 @@ def list_enrollments_for_student(conn, student_id: int):
     ).fetchall()
 
 
+def list_enrollments_for_course(conn, course_id: int):
+    return conn.execute(
+        "SELECT * FROM enrollments WHERE course_id = ? ORDER BY id", (course_id,)
+    ).fetchall()
+
+
 # -- progress -------------------------------------------------------------
 
 def mark_lesson_complete(conn, enrollment_id: int, lesson_id: int) -> None:
