@@ -35,11 +35,19 @@ for this arc, not just a milestone-1 gap to fill in later.
   and a manual category is sticky -- `POST /api/demo/recategorize`
   (re-running the engine, e.g. after a keyword-rule change) skips any
   transaction a human has already fixed by hand.
-- **Mock data generator** (`mock_data.py`): deterministic (seeded)
-  synthetic accounts + several months of realistic transactions per
-  account, including recurring monthly bills (rent, a subscription, a
-  utility bill) planted on a fixed day-of-month -- there to give
-  milestone 2's planned recurring-bill detector real signal to find.
+- **Mock data generator** (`mock_data.py`): a seeded synthetic
+  accounts + several months of realistic transactions per account,
+  including recurring monthly bills (rent, a subscription, a utility
+  bill) planted on a fixed day-of-month -- there to give milestone 2's
+  planned recurring-bill detector real signal to find. Deterministic
+  *for a given seed and date*: the same `(seed, today)` pair always
+  produces byte-identical output (verified by
+  `test_mock_data.py::test_generate_mock_transactions_is_deterministic`),
+  but since the date range is always "N months back from today," the
+  actual calendar dates -- and therefore the exact transaction list --
+  shift day to day. `POST /api/demo/seed` does not pin `today`, so
+  reseeding on a different day produces a data set anchored to the new
+  date, not a byte-identical replay of the old one.
 - **Auth**: bcrypt password hashing + HS256 JWT, same shape as this
   repo's other arcs (`sub` claim always encoded as a string per
   `dev_collab_platform`'s PR #11 fix).

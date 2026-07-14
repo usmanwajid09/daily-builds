@@ -37,7 +37,7 @@ def list_accounts():
 def create_account():
     body = request.get_json(silent=True) or {}
     name = (body.get("name") or "").strip()
-    account_type = (body.get("account_type") or "").strip()
+    account_type = (body.get("account_type") or "").strip().lower()
     institution_name = (body.get("institution_name") or "Demo Bank").strip()
     currency = (body.get("currency") or "USD").strip().upper()
 
@@ -106,7 +106,7 @@ def create_account_transaction(account_id):
     merchant = (body.get("merchant") or "").strip()
     description = (body.get("description") or "").strip()
     posted_at = (body.get("posted_at") or "").strip()
-    category_override = (body.get("category") or "").strip() or None
+    category_override = (body.get("category") or "").strip().lower() or None
 
     try:
         amount = float(body.get("amount"))

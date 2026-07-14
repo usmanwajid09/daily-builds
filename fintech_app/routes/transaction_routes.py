@@ -61,7 +61,7 @@ def update_transaction(transaction_id):
     body = request.get_json(silent=True) or {}
     if "category" not in body:
         return jsonify(error="category is required"), 400
-    category = (body.get("category") or "").strip()
+    category = (body.get("category") or "").strip().lower()
     if category not in categorization.ALL_CATEGORIES:
         return jsonify(error=f"category must be one of {categorization.ALL_CATEGORIES}"), 400
 

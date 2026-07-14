@@ -145,3 +145,25 @@ def test_account_balance_reflects_transactions(client):
 
     r = client.get(f"/api/accounts/{account_id}", headers=h)
     assert r.get_json()["balance"] == 70
+
+
+def test_create_account_normalizes_type_case(client):
+    token, _ = signup(client)
+    h = auth_header(token)
+    r = client.post("/api/accounts", json={"name": "Mixed Case", "account_type": "Checking"}, headers=h)
+    assert r.status_code == 201
+    assert r.get_json()["account_type"] == "checking"
+
+
+def test_create_transaction_normalizes_category_case(client):
+    token, _ = signup(client)
+    h = auth_header(token)
+    r = client.post("/api/accounts", json={"name": "Checking", "account_type": "checking"}, headers=h)
+    account_id = r.get_json()["id"]
+    r = client.post(
+        f"/api/accounts/{account_id}/transactions",
+        json={"amount": -5, "posted_at": "2026-01-01", "category": "Dining"},
+        headers=h,
+    )
+    assert r.status_code == 201
+    assert r.get_json()["category"] == "dining"

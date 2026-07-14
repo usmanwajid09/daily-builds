@@ -112,3 +112,17 @@ def test_cannot_access_another_users_transaction(client):
     assert r.status_code == 404
     r = client.delete(f"/api/transactions/{txn_id}", headers=h_b)
     assert r.status_code == 404
+
+
+def test_patch_transaction_normalizes_category_case(client):
+    token, _ = signup(client)
+    h = auth_header(token)
+    r = client.post("/api/accounts", json={"name": "Checking", "account_type": "checking"}, headers=h)
+    account_id = r.get_json()["id"]
+    r = client.post(f"/api/accounts/{account_id}/transactions",
+                     json={"amount": -5, "posted_at": "2026-01-01"}, headers=h)
+    txn_id = r.get_json()["id"]
+
+    r = client.patch(f"/api/transactions/{txn_id}", json={"category": "Entertainment"}, headers=h)
+    assert r.status_code == 200
+    assert r.get_json()["category"] == "entertainment"
