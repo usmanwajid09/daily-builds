@@ -23,9 +23,9 @@ information forward through its hidden state.
   cross-entropy loss gradient is propagated backwards through every time
   step, using `tanh'(z) = 1 - h_t^2` at each step, accumulating gradients
   for `Wxh`, `Whh`, `bh`, `Why`, `by`.
-- **Optimiser:** plain stochastic gradient descent (one sample at a time),
-  with gradients clipped to `[-5, 5]` so the recurrent gradients cannot
-  explode.
+- **Optimiser:** plain mini-batch stochastic gradient descent (batches
+  of 32, one update per batch), with gradients clipped to `[-5, 5]` so
+  the recurrent gradients cannot explode.
 - **Initialisation:** small random weights (Xavier-ish scale
   `1/sqrt(fan_in)`), with a fixed seed for reproducibility.
 
